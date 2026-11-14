@@ -12,7 +12,6 @@
       color: #f1f2f6;
       font-family: "Malgun Gothic", "Segoe UI", sans-serif;
       user-select: none;
-      overflow-x: hidden;
       min-height: 100vh;
     }
     .digital { font-family: 'Consolas', monospace; }
@@ -22,15 +21,21 @@
     @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.3} }
     .drag-region { -webkit-app-region: drag; }
     .no-drag     { -webkit-app-region: no-drag; }
+
+    /* 커스텀 스크롤바 */
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: #12131a; }
+    ::-webkit-scrollbar-thumb { background: #2b2d3a; border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: #44475a; }
   </style>
 </head>
-<body class="flex flex-col items-center justify-center p-3">
+<body class="flex flex-col items-center justify-start p-3 py-4">
 
   <!-- 메인 창 컨테이너 -->
-  <div class="w-full max-w-md bg-[#181920] border border-[#2b2d3a] rounded-2xl shadow-2xl overflow-hidden flex flex-col">
+  <div class="w-full max-w-lg bg-[#181920] border border-[#2b2d3a] rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[95vh]">
 
     <!-- 타이틀바 -->
-    <div class="drag-region flex items-center justify-between px-4 py-3 bg-[#0a0b10] border-b border-[#1e1f2b]">
+    <div class="drag-region flex items-center justify-between px-4 py-3 bg-[#0a0b10] border-b border-[#1e1f2b] flex-shrink-0">
       <div class="flex items-center space-x-2">
         <span class="w-3 h-3 rounded-full bg-red-600 inline-block" id="recDot" style="box-shadow:0 0 6px #ff3333"></span>
         <span class="text-sm font-extrabold text-white tracking-wide">수지캠 (SUZICAM)</span>
@@ -44,16 +49,16 @@
       </div>
     </div>
 
-    <!-- 본문 내용 -->
-    <div class="p-4 space-y-3">
+    <!-- 스크롤 가능한 본문 영역 -->
+    <div class="p-4 space-y-3 overflow-y-auto flex-1">
 
-      <!-- 타이머 -->
+      <!-- 타이머 및 상태 -->
       <div class="bg-black/90 border border-[#1e1f2b] rounded-xl p-4 text-center flex flex-col items-center space-y-2">
         <div class="text-[11px] text-neutral-500 tracking-widest uppercase font-medium">Recording Timer</div>
         <div id="recTimer" class="digital text-5xl font-bold timer-idle">00:00:00.000</div>
         <div class="flex items-center space-x-2">
           <span id="statusBadge" class="text-xs px-3 py-0.5 rounded-full bg-neutral-900 text-neutral-500 border border-neutral-800 font-semibold">대기 중</span>
-          <span id="orientBadge" class="text-xs px-2.5 py-0.5 rounded-full bg-neutral-900 text-cyan-400 border border-neutral-800 font-medium">모니터 방향: 가로</span>
+          <span id="orientBadge" class="text-xs px-2.5 py-0.5 rounded-full bg-neutral-900 text-cyan-400 border border-neutral-800 font-medium">모니터 방향: 감지 대기</span>
         </div>
       </div>
 
@@ -93,7 +98,7 @@
         </div>
       </div>
 
-      <!-- 세로모드/화면 회전 및 오디오 & FPS 옵션 -->
+      <!-- 세로모드 및 오디오 & FPS 옵션 -->
       <div class="bg-[#13141c] border border-[#1e1f2b] rounded-xl p-3 space-y-2 text-xs text-neutral-300">
         <div class="flex items-center justify-between">
           <div class="flex items-center space-x-2">
@@ -115,10 +120,9 @@
           </div>
         </div>
 
-        <!-- 세로모드 및 회전 제어 옵션 -->
         <div class="flex items-center justify-between pt-1 border-t border-neutral-800/80">
-          <span class="text-neutral-400">화면 방향 / 회전:</span>
-          <select id="selRotate" onchange="onRotateSettingChange()" class="bg-neutral-800 text-cyan-400 rounded px-2 py-1 border border-neutral-700 text-xs font-medium cursor-pointer">
+          <span class="text-neutral-400">녹화 시 화면 방향 / 회전:</span>
+          <select id="selRotate" class="bg-neutral-800 text-cyan-400 rounded px-2 py-1 border border-neutral-700 text-xs font-medium cursor-pointer">
             <option value="auto" selected>세로모드 자동 감지</option>
             <option value="0">기본 (0°)</option>
             <option value="90">시계방향 90° 회전</option>
@@ -142,27 +146,26 @@
         </button>
       </div>
 
-      <!-- 녹화 완료 결과 -->
-      <div id="resultCard" class="hidden bg-[#13141c] border border-green-700/40 rounded-xl p-3 space-y-2">
-        <div class="flex items-center justify-between">
-          <span class="text-xs font-bold text-green-400">✓ 녹화 완료!</span>
-          <div class="flex items-center space-x-1.5">
-            <button onclick="rotatePreviewVideo()" class="px-2.5 py-1 text-xs font-semibold bg-neutral-800 hover:bg-neutral-700 text-cyan-300 rounded border border-neutral-700 transition flex items-center space-x-1 cursor-pointer">
-              <span>🔄</span><span id="lblRotateAngle">화면 90° 돌리기</span>
-            </button>
-            <a id="btnDl" href="#" download="SuziCam.webm"
-              class="px-3 py-1 text-xs font-bold bg-green-700 hover:bg-green-600 text-white rounded transition">💾 다운로드</a>
-          </div>
+      <!-- 최근 녹화 목록 영역 (최대 5개 노출, 개별 X 삭제) -->
+      <div id="recordingsSection" class="hidden space-y-2.5 pt-2">
+        <div class="flex items-center justify-between px-1">
+          <span class="text-xs font-bold text-neutral-300 flex items-center space-x-1.5">
+            <span>🎬 최근 녹화 목록</span>
+            <span id="recCountBadge" class="px-2 py-0.2 text-[10px] bg-red-950 text-red-300 border border-red-800 rounded-full font-bold">0 / 5</span>
+          </span>
+          <button onclick="clearAllRecordings()" class="text-[11px] text-neutral-500 hover:text-red-400 transition cursor-pointer">
+            전체 비우기
+          </button>
         </div>
-        <div class="flex justify-center bg-black rounded p-1 overflow-hidden">
-          <video id="prevVideo" controls class="rounded max-h-56 max-w-full transition-transform duration-300"></video>
-        </div>
+
+        <!-- 녹화본 카드 리스트가 동적으로 렌더링되는 컨테이너 -->
+        <div id="recordingsList" class="space-y-3"></div>
       </div>
 
     </div>
 
     <!-- 푸터 -->
-    <div class="px-4 py-2.5 bg-[#0a0b10] border-t border-[#1e1f2b] flex items-center justify-between text-[11px] text-neutral-500">
+    <div class="px-4 py-2.5 bg-[#0a0b10] border-t border-[#1e1f2b] flex items-center justify-between text-[11px] text-neutral-500 flex-shrink-0">
       <span>수지캠 v0.1.0-test</span>
       <a href="https://github.com/kookppong/cam-lite" target="_blank" class="hover:text-white underline transition">
         GitHub Releases (.exe 다운로드)
