@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      width: 100vw; height: 100vh;
+      background: transparent;
+      overflow: hidden;
+      cursor: crosshair;
+    }
+    #overlay {
+      position: fixed; inset: 0;
+      background: rgba(0, 0, 0, 0.45);
+    }
+    #selBox {
+      position: fixed;
+      border: 2px solid #ef4444;
+      background: rgba(239,68,68,0.06);
+      display: none;
+      pointer-events: none;
+    }
+    #sizeLabel {
+      position: fixed;
+      background: rgba(0,0,0,0.75);
+      color: #fff;
+      font: bold 12px/1 Consolas, monospace;
+      padding: 3px 7px;
+      border-radius: 4px;
+      display: none;
+      pointer-events: none;
+      white-space: nowrap;
+    }
+    #hint {
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background: rgba(15,16,21,0.92);
+      border: 1px solid #3b3c4e;
+      border-radius: 12px;
+      padding: 16px 28px;
+      text-align: center;
+      color: #f1f2f6;
+      font: 14px "Malgun Gothic", sans-serif;
+      pointer-events: none;
+    }
+    #hint .sub { color: #9ca3af; font-size: 12px; margin-top: 6px; }
+    #hint .esc { color: #f87171; font-size: 11px; margin-top: 8px; }
+  </style>
+</head>
+<body>
+  <div id="overlay"></div>
+  <div id="selBox"></div>
+  <div id="sizeLabel"></div>
+  <div id="hint">
+    <div>🖱️ 녹화할 영역을 드래그로 설정하세요</div>
+    <div class="sub">마우스를 눌러 끌면 붉은 사각형으로 영역이 표시됩니다</div>
+    <div class="esc">ESC — 취소</div>
+  </div>
+
+  <script>
+    const { ipcRenderer } = require('electron');
+    const selBox   = document.getElementById('selBox');
+    const sizeLabel = document.getElementById('sizeLabel');
+    const hint     = document.getElementById('hint');
+
+    let startX = 0, startY = 0, dragging = false;
+
+    document.addEventListener('mousedown', e => {
+      startX = e.screenX; startY = e.screenY;
+      dragging = true;
+      hint.style.display = 'none';
+      selBox.style.cssText = `display:block;left:${e.clientX}px;top:${e.clientY}px;width:0;height:0;`;
+      sizeLabel.style.display = 'block';
+    });
+
+    document.addEventListener('mousemove', e => {
+      if (!dragging) return;
+      const x = Math.min(e.clientX, startX - (e.screenX - startX) + e.clientX);
+      const cx = Math.min(e.clientX, startX);
+      const cy = Math.min(e.clientY, startY);
+      // 화면 클라이언트 좌표
+      const sx = Math.min(e.clientX, e.clientX - (e.clientX - (e.screenX - window.screenX)));
+      const left   = Math.min(e.clientX, startX - (e.screenX - startX) + e.clientX <= 0 ? 0 : startX - (e.screenX - startX) + e.clientX);
+
+      // 단순하게: 클라이언트 기준으로 셀렉션 박스 그리기
+      const bx = Math.min(e.clientX, e.clientX - (e.clientX - (startX - (e.screenX - e.clientX))));
+      
+      // 올바른 계산: screenX/clientX offset
+      const offsetX = e.screenX - e.clientX;
+      const offsetY = e.screenY - e.clientY;
+      const sx0 = startX - offsetX;  // 시작점 클라이언트 X
+      const sy0 = startY - offsetY;  // 시작점 클라이언트 Y
+
+      const drawX = Math.min(e.clientX, sx0);
+      const drawY = Math.min(e.clientY, sy0);
+      const drawW = Math.abs(e.clientX - sx0);
+      const drawH = Math.abs(e.clientY - sy0);
+
+      selBox.style.left   = drawX + 'px';
+      selBox.style.top    = drawY + 'px';
+      selBox.style.width  = drawW + 'px';
+      selBox.style.height = drawH + 'px';
+
+      // 실제 화면 픽셀 (screen 좌표)
+      const rw = Math.abs(e.screenX - startX);
+      const rh = Math.abs(e.screenY - startY);
+      sizeLabel.textContent = `${rw} × ${rh}`;
+      sizeLabel.style.left = (drawX + drawW + 6) + 'px';
+      sizeLabel.style.top  = (drawY + drawH + 4) + 'px';
+    });
+
+    document.addEventListener('mouseup', e => {
+      if (!dragging) return;
+      dragging = false;
+      selBox.style.display = 'none';
+      sizeLabel.style.display = 'none';
+
+      const rx = Math.min(e.screenX, startX);
+      const ry = Math.min(e.screenY, startY);
+      const rw = Math.abs(e.screenX - startX);
+      const rh = Math.abs(e.screenY - startY);
+
+      if (rw < 50 || rh < 50) {
+        ipcRenderer.send('area-cancelled');
+        return;
+      }
+      // screen 절대 좌표로 전달 (Electron 캡처에서 그대로 사용)
+      ipcRenderer.send('area-confirmed', { x: rx, y: ry, w: rw, h: rh });
+    });
+
+    document.addEventListener('keydown', e => {
+      if (e.key === 'Escape') ipcRenderer.send('area-cancelled');
+    });
+  </script>
+</body>
+</html>

@@ -2,535 +2,149 @@
 <html lang="ko">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>수지캠 (SuziCam) v0.1.0-test</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
+    * { box-sizing: border-box; }
     body {
-      background-color: #0f1015;
+      margin: 0;
+      background: #0f1015;
       color: #f1f2f6;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Malgun Gothic", sans-serif;
+      font-family: "Malgun Gothic", "Segoe UI", sans-serif;
       user-select: none;
+      overflow-x: hidden;
+      min-height: 100vh;
     }
-    .digital-font { font-family: 'Consolas', monospace; }
-    .timer-glow { text-shadow: 0 0 14px rgba(80,250,123,0.7); }
-    .timer-idle { color: #4b5563; }
-    .rec-pulse { animation: recblink 1s infinite; }
-    @keyframes recblink { 0%,100%{opacity:1} 50%{opacity:0.4} }
-
-    /* 영역 선택 오버레이 */
-    #areaOverlay {
-      display: none;
-      position: fixed;
-      inset: 0;
-      z-index: 9999;
-      cursor: crosshair;
-    }
-    #areaOverlay.active { display: block; }
-    #areaGuide {
-      position: fixed;
-      inset: 0;
-      background: rgba(0,0,0,0.55);
-      pointer-events: none;
-      z-index: 9998;
-      display: none;
-    }
-    #areaGuide.active { display: block; }
-    #selectionBox {
-      position: fixed;
-      border: 2px solid #ef4444;
-      background: rgba(239,68,68,0.08);
-      pointer-events: none;
-      z-index: 10000;
-      display: none;
-    }
-    #areaInstruction {
-      position: fixed;
-      top: 50%;
-      left: 50%;
-      transform: translate(-50%, -50%);
-      background: rgba(15,16,21,0.9);
-      border: 1px solid #3b3c4e;
-      border-radius: 12px;
-      padding: 18px 28px;
-      text-align: center;
-      z-index: 10001;
-      pointer-events: none;
-    }
+    .digital { font-family: 'Consolas', monospace; }
+    .timer-idle  { color: #374151; }
+    .timer-on    { color: #4ade80; text-shadow: 0 0 14px rgba(74,222,128,.65); }
+    .rec-dot     { animation: blink 1s infinite; }
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.3} }
+    .drag-region { -webkit-app-region: drag; }
+    .no-drag     { -webkit-app-region: no-drag; }
   </style>
 </head>
-<body class="p-4 flex flex-col items-center justify-center min-h-screen">
+<body class="flex flex-col items-center justify-center p-3">
 
-  <!-- 영역 선택 오버레이 -->
-  <div id="areaGuide" class="active-off"></div>
-  <div id="areaInstruction" style="display:none">
-    <div class="text-sm font-bold text-white mb-1">🖱️ 녹화할 영역을 드래그로 설정하세요</div>
-    <div class="text-xs text-neutral-400">마우스를 누른 채 끌어 사각형을 그리면 녹화 영역이 설정됩니다</div>
-    <div class="text-xs text-red-400 mt-2">ESC — 취소</div>
-  </div>
-  <div id="selectionBox"></div>
-  <div id="areaOverlay" tabindex="0"></div>
+  <!-- 메인 창 컨테이너 -->
+  <div class="w-full max-w-md bg-[#181920] border border-[#2b2d3a] rounded-2xl shadow-2xl overflow-hidden flex flex-col">
 
-  <!-- 메인 앱 카드 -->
-  <div class="w-full max-w-lg bg-[#181920] border border-[#2b2d3a] rounded-2xl p-5 shadow-2xl space-y-4">
-
-    <!-- 타이틀 & 버전 -->
-    <div class="flex items-center justify-between border-b border-[#2b2d3a] pb-3">
+    <!-- 타이틀바 -->
+    <div class="drag-region flex items-center justify-between px-4 py-3 bg-[#0a0b10] border-b border-[#1e1f2b]">
       <div class="flex items-center space-x-2">
-        <span class="w-3.5 h-3.5 rounded-full bg-red-600 inline-block" style="box-shadow:0 0 8px #ff3333"></span>
-        <h1 class="text-base font-extrabold tracking-wide text-white">수지캠 (SUZICAM)</h1>
-        <span class="px-2 py-0.5 text-xs font-bold bg-red-950 text-red-300 border border-red-800 rounded-md">v0.1.0-test</span>
+        <span class="w-3 h-3 rounded-full bg-red-600 inline-block" id="recDot" style="box-shadow:0 0 6px #ff3333"></span>
+        <span class="text-sm font-extrabold text-white tracking-wide">수지캠 (SUZICAM)</span>
+        <span class="text-xs px-1.5 py-0.5 bg-red-950 text-red-300 border border-red-800 rounded font-bold">v0.1.0-test</span>
       </div>
-      <span id="statusBadge" class="text-xs px-2.5 py-0.5 rounded-full bg-neutral-800 text-neutral-400 font-semibold border border-neutral-700">대기 중</span>
+      <div class="no-drag flex items-center space-x-1">
+        <button onclick="if(window.ipcRenderer) ipcRenderer.send('win-minimize')"
+          class="w-7 h-7 rounded hover:bg-[#2b2d3a] text-neutral-400 hover:text-white text-xs flex items-center justify-center cursor-pointer">─</button>
+        <button onclick="if(window.ipcRenderer) ipcRenderer.send('win-close')"
+          class="w-7 h-7 rounded hover:bg-red-700 text-neutral-400 hover:text-white text-xs flex items-center justify-center cursor-pointer">✕</button>
+      </div>
     </div>
 
-    <!-- 디지털 타이머 -->
-    <div class="bg-black/90 border border-[#2b2d3a] rounded-xl p-4 text-center space-y-3">
-      <div class="text-xs text-neutral-500 font-medium tracking-widest uppercase">Recording Timer</div>
-      <div id="recTimer" class="digital-font text-5xl font-bold timer-idle">00:00:00.000</div>
+    <!-- 본문 내용 -->
+    <div class="p-4 space-y-3">
 
-      <!-- REC / STOP / PAUSE 버튼 -->
-      <div class="flex items-center justify-center space-x-3 pt-1">
-        <button id="btnRec" onclick="handleRecordToggle()"
-          class="px-6 py-3 rounded-xl font-bold text-sm bg-red-600 hover:bg-red-700 text-white transition-all flex items-center space-x-2 cursor-pointer"
-          style="box-shadow:0 4px 15px rgba(255,0,0,0.4)">
-          <span class="w-3 h-3 rounded-full bg-white inline-block"></span>
-          <span id="btnRecText">녹화 시작</span>
-        </button>
-        <button id="btnPause" onclick="handlePauseToggle()" disabled
-          class="px-4 py-3 rounded-xl font-bold text-sm bg-neutral-800 text-neutral-500 cursor-not-allowed transition-all">
-          ❚❚ 일시정지
-        </button>
+      <!-- 타이머 -->
+      <div class="bg-black/90 border border-[#1e1f2b] rounded-xl p-4 text-center flex flex-col items-center space-y-2">
+        <div class="text-[11px] text-neutral-500 tracking-widest uppercase font-medium">Recording Timer</div>
+        <div id="recTimer" class="digital text-5xl font-bold timer-idle">00:00:00.000</div>
+        <span id="statusBadge" class="text-xs px-3 py-0.5 rounded-full bg-neutral-900 text-neutral-500 border border-neutral-800 font-semibold">대기 중</span>
       </div>
 
-      <!-- 옵션 -->
-      <div class="flex items-center justify-around pt-2 text-xs text-neutral-400 border-t border-neutral-800">
-        <label class="flex items-center space-x-1 cursor-pointer">
-          <input type="checkbox" id="chkAudio" checked class="accent-red-600 cursor-pointer">
-          <span>PC 소리 녹음</span>
+      <!-- 녹화 영역 설정 (반디캠 방식) -->
+      <div class="bg-[#13141c] border border-[#1e1f2b] rounded-xl p-3.5 space-y-2.5">
+        <div class="flex items-center justify-between">
+          <span class="text-xs font-bold text-neutral-200">📐 녹화 영역 지정</span>
+          <span id="areaModeBadge" class="text-xs px-2 py-0.5 rounded bg-neutral-800 text-neutral-400 border border-neutral-700">전체 화면</span>
+        </div>
+        <div class="grid grid-cols-4 gap-2 text-xs">
+          <div class="bg-black/60 border border-neutral-800 rounded-lg p-2 text-center">
+            <div class="text-neutral-500 mb-0.5">X</div>
+            <div id="areaX" class="text-cyan-400 font-mono font-bold">-</div>
+          </div>
+          <div class="bg-black/60 border border-neutral-800 rounded-lg p-2 text-center">
+            <div class="text-neutral-500 mb-0.5">Y</div>
+            <div id="areaY" class="text-cyan-400 font-mono font-bold">-</div>
+          </div>
+          <div class="bg-black/60 border border-neutral-800 rounded-lg p-2 text-center">
+            <div class="text-neutral-500 mb-0.5">너비</div>
+            <div id="areaW" class="text-cyan-400 font-mono font-bold">전체</div>
+          </div>
+          <div class="bg-black/60 border border-neutral-800 rounded-lg p-2 text-center">
+            <div class="text-neutral-500 mb-0.5">높이</div>
+            <div id="areaH" class="text-cyan-400 font-mono font-bold">전체</div>
+          </div>
+        </div>
+        <div class="flex space-x-2 pt-0.5">
+          <button id="btnArea" onclick="openAreaSelector()"
+            class="flex-1 py-2.5 rounded-xl text-xs font-bold bg-blue-700 hover:bg-blue-600 text-white transition cursor-pointer">
+            🖱️ 화면에서 영역 직접 설정
+          </button>
+          <button onclick="resetArea()"
+            class="px-3.5 py-2.5 rounded-xl text-xs font-bold bg-neutral-800 hover:bg-neutral-700 text-neutral-300 border border-neutral-700 cursor-pointer transition">
+            초기화
+          </button>
+        </div>
+      </div>
+
+      <!-- 오디오 & FPS 옵션 -->
+      <div class="bg-[#13141c] border border-[#1e1f2b] rounded-xl px-4 py-3 flex items-center justify-around text-xs text-neutral-300">
+        <label class="flex items-center space-x-2 cursor-pointer">
+          <input type="checkbox" id="chkSys" checked class="accent-red-600 w-4 h-4 cursor-pointer">
+          <span>PC 소리</span>
         </label>
-        <label class="flex items-center space-x-1 cursor-pointer">
-          <input type="checkbox" id="chkMic" class="accent-red-600 cursor-pointer">
-          <span>마이크 녹음</span>
+        <label class="flex items-center space-x-2 cursor-pointer">
+          <input type="checkbox" id="chkMic" class="accent-red-600 w-4 h-4 cursor-pointer">
+          <span>마이크</span>
         </label>
-        <div class="flex items-center space-x-1">
+        <div class="flex items-center space-x-1.5">
           <span>FPS:</span>
-          <select id="selFps" class="bg-neutral-800 text-white rounded px-1.5 py-0.5 border border-neutral-700 text-xs">
+          <select id="selFps" class="bg-neutral-800 text-white rounded px-2 py-1 border border-neutral-700 text-xs">
             <option value="60" selected>60</option>
             <option value="30">30</option>
           </select>
         </div>
       </div>
-    </div>
 
-    <!-- 영역 설정 패널 (반디캠 스타일 핵심) -->
-    <div class="bg-[#12131a] border border-[#2b2d3a] rounded-xl p-4 space-y-3">
-      <div class="flex items-center justify-between">
-        <span class="text-xs font-bold text-neutral-200">📐 녹화 영역 설정</span>
-        <span id="areaModeBadge" class="text-xs px-2 py-0.5 rounded bg-neutral-800 text-neutral-400 border border-neutral-700">전체 화면</span>
-      </div>
-
-      <!-- 영역 미리보기 수치 -->
-      <div class="grid grid-cols-4 gap-2 text-xs">
-        <div class="bg-black/60 border border-neutral-800 rounded-lg p-2 text-center">
-          <div class="text-neutral-500 mb-0.5">X</div>
-          <div id="areaX" class="text-cyan-400 font-mono font-bold">0</div>
-        </div>
-        <div class="bg-black/60 border border-neutral-800 rounded-lg p-2 text-center">
-          <div class="text-neutral-500 mb-0.5">Y</div>
-          <div id="areaY" class="text-cyan-400 font-mono font-bold">0</div>
-        </div>
-        <div class="bg-black/60 border border-neutral-800 rounded-lg p-2 text-center">
-          <div class="text-neutral-500 mb-0.5">너비</div>
-          <div id="areaW" class="text-cyan-400 font-mono font-bold" id="areaW">전체</div>
-        </div>
-        <div class="bg-black/60 border border-neutral-800 rounded-lg p-2 text-center">
-          <div class="text-neutral-500 mb-0.5">높이</div>
-          <div id="areaH" class="text-cyan-400 font-mono font-bold">전체</div>
-        </div>
-      </div>
-
-      <!-- 영역 설정 버튼들 -->
-      <div class="flex space-x-2">
-        <button onclick="startAreaSelect()"
-          class="flex-1 py-2.5 rounded-xl text-sm font-bold bg-blue-700 hover:bg-blue-600 text-white transition cursor-pointer">
-          🖱️ 영역 직접 설정
+      <!-- REC / PAUSE 버튼 -->
+      <div class="flex space-x-2.5 pt-1">
+        <button id="btnRec" onclick="toggleRecord()"
+          class="flex-1 py-3.5 rounded-xl font-extrabold text-sm bg-red-600 hover:bg-red-700 text-white transition flex items-center justify-center space-x-2 cursor-pointer"
+          style="box-shadow:0 4px 15px rgba(255,0,0,0.4)">
+          <span class="w-3 h-3 rounded-full bg-white inline-block"></span>
+          <span id="btnRecTxt">녹화 시작</span>
         </button>
-        <button onclick="resetArea()"
-          class="px-4 py-2.5 rounded-xl text-sm font-bold bg-neutral-800 hover:bg-neutral-700 text-neutral-300 transition cursor-pointer border border-neutral-700">
-          전체 화면으로 초기화
+        <button id="btnPause" onclick="togglePause()" disabled
+          class="px-5 py-3.5 rounded-xl font-bold text-sm bg-neutral-800 text-neutral-500 cursor-not-allowed transition">
+          ❚❚
         </button>
       </div>
-    </div>
 
-    <!-- 실시간 테스트 벤치 -->
-    <div class="bg-[#12131a] border border-[#2b2d3a] rounded-xl p-3 space-y-2">
-      <div class="text-xs font-bold text-neutral-300 flex justify-between">
-        <span>🧪 실시간 테스트 벤치</span>
-        <span class="text-xs text-neutral-500 font-normal">녹화 시 화면 변화 검증용</span>
-      </div>
-      <div class="grid grid-cols-2 gap-2">
-        <div class="bg-black/60 border border-neutral-800 rounded-lg p-2.5 flex flex-col items-center">
-          <div class="flex items-center justify-between w-full text-xs mb-1">
-            <span class="text-neutral-400">FPS 모션</span>
-            <span id="fpsDisplay" class="text-cyan-400 font-mono font-bold">-- FPS</span>
-          </div>
-          <canvas id="motionCanvas" width="180" height="65" class="rounded bg-black border border-neutral-900"></canvas>
+      <!-- 녹화 완료 결과 -->
+      <div id="resultCard" class="hidden bg-[#13141c] border border-green-700/40 rounded-xl p-3 space-y-2">
+        <div class="flex items-center justify-between">
+          <span class="text-xs font-bold text-green-400">✓ 녹화 완료!</span>
+          <a id="btnDl" href="#" download="SuziCam.webm"
+            class="px-3 py-1 text-xs font-bold bg-green-700 hover:bg-green-600 text-white rounded-lg transition">💾 영상 다운로드</a>
         </div>
-        <div class="bg-black/60 border border-neutral-800 rounded-lg p-2.5 flex flex-col items-center justify-between">
-          <div class="text-xs text-neutral-400 w-full text-left">오디오 싱크 검증</div>
-          <button id="btnBeep" onclick="toggleBeepSound()"
-            class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-neutral-800 hover:bg-neutral-700 text-yellow-300 border border-neutral-700 cursor-pointer transition">
-            🔈 1초 비프음 켜기
-          </button>
-          <div class="text-xs text-neutral-500 text-center">음성-화면 싱크 밀림 확인</div>
-        </div>
+        <video id="prevVideo" controls class="w-full rounded bg-black max-h-40 border border-neutral-800"></video>
       </div>
-      <div id="clickTarget" onclick="handleClickTarget()"
-        class="border border-dashed border-neutral-700 hover:border-red-500 rounded-lg py-2 text-center cursor-pointer transition">
-        <span id="clickTargetText" class="text-xs text-neutral-400">🖱️ 클릭 반응 테스트 — 감지: 0회</span>
-      </div>
-    </div>
 
-    <!-- 녹화 완료 미리보기 -->
-    <div id="resultCard" class="hidden bg-[#12131a] border border-green-600/40 rounded-xl p-3 space-y-2">
-      <div class="flex items-center justify-between">
-        <span class="text-xs font-bold text-green-400">✓ 녹화 완료!</span>
-        <a id="btnDownload" href="#" download="SuziCam_Record.webm"
-          class="px-3 py-1 text-xs font-bold bg-green-600 hover:bg-green-700 text-white rounded-lg transition">💾 영상 다운로드</a>
-      </div>
-      <video id="previewVideo" controls class="w-full rounded bg-black max-h-48 border border-neutral-800"></video>
     </div>
 
     <!-- 푸터 -->
-    <div class="flex items-center justify-between pt-1 border-t border-[#2b2d3a] text-xs text-neutral-500">
-      <span>빌드: <span class="text-neutral-400 font-mono">v0.1.0-test (Alpha)</span></span>
-      <a href="https://github.com/kookppong/cam-lite" target="_blank" class="hover:text-white underline transition">GitHub</a>
+    <div class="px-4 py-2.5 bg-[#0a0b10] border-t border-[#1e1f2b] flex items-center justify-between text-[11px] text-neutral-500">
+      <span>수지캠 v0.1.0-test</span>
+      <a href="https://github.com/kookppong/cam-lite" target="_blank" class="hover:text-white underline transition">
+        GitHub Releases (.exe 다운로드)
+      </a>
     </div>
+
   </div>
 
-  <script>
-  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  // 1. 녹화 타이머 (녹화 중에만 카운팅, 대기 시 고정)
-  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  const timerEl = document.getElementById('recTimer');
-  let recStart = 0, isRecActive = false, isPaused = false, pausedTotal = 0, pauseStart = 0;
-  let timerRaf = null;
-
-  function startTimer() {
-    recStart = performance.now();
-    pausedTotal = 0;
-    isPaused = false;
-    timerEl.classList.remove('timer-idle');
-    timerEl.classList.add('timer-glow', 'text-green-400');
-    function tick() {
-      if (!isRecActive) return;
-      const now = performance.now();
-      const ms = isPaused ? (pauseStart - recStart - pausedTotal) : (now - recStart - pausedTotal);
-      const ts = Math.floor(ms / 1000);
-      timerEl.textContent =
-        String(Math.floor(ts/3600)).padStart(2,'0') + ':' +
-        String(Math.floor((ts%3600)/60)).padStart(2,'0') + ':' +
-        String(ts%60).padStart(2,'0') + '.' +
-        String(Math.floor(ms%1000)).padStart(3,'0');
-      timerRaf = requestAnimationFrame(tick);
-    }
-    timerRaf = requestAnimationFrame(tick);
-  }
-
-  function stopTimer() {
-    if (timerRaf) cancelAnimationFrame(timerRaf);
-    timerEl.textContent = '00:00:00.000';
-    timerEl.classList.remove('timer-glow','text-green-400');
-    timerEl.classList.add('timer-idle');
-  }
-
-  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  // 2. 영역 설정 (반디캠 스타일 드래그 셀렉터)
-  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  let cropArea = null; // null = 전체 화면
-  let isDragging = false, dragStartX = 0, dragStartY = 0;
-  const overlay  = document.getElementById('areaOverlay');
-  const guide    = document.getElementById('areaGuide');
-  const selBox   = document.getElementById('selectionBox');
-  const instrEl  = document.getElementById('areaInstruction');
-
-  function startAreaSelect() {
-    // 오버레이 표시
-    overlay.classList.add('active');
-    guide.style.cssText = 'display:block;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9998;';
-    instrEl.style.display = 'block';
-    selBox.style.display = 'none';
-    overlay.focus();
-  }
-
-  function endAreaSelect() {
-    overlay.classList.remove('active');
-    guide.style.display = 'none';
-    instrEl.style.display = 'none';
-    selBox.style.display = 'none';
-    isDragging = false;
-  }
-
-  overlay.addEventListener('mousedown', e => {
-    isDragging = true;
-    dragStartX = e.clientX;
-    dragStartY = e.clientY;
-    instrEl.style.display = 'none';
-    selBox.style.cssText = `display:block;left:${dragStartX}px;top:${dragStartY}px;width:0;height:0;`;
-  });
-
-  overlay.addEventListener('mousemove', e => {
-    if (!isDragging) return;
-    const x = Math.min(e.clientX, dragStartX);
-    const y = Math.min(e.clientY, dragStartY);
-    const w = Math.abs(e.clientX - dragStartX);
-    const h = Math.abs(e.clientY - dragStartY);
-    selBox.style.left   = x + 'px';
-    selBox.style.top    = y + 'px';
-    selBox.style.width  = w + 'px';
-    selBox.style.height = h + 'px';
-  });
-
-  overlay.addEventListener('mouseup', e => {
-    if (!isDragging) return;
-    const x = Math.min(e.clientX, dragStartX);
-    const y = Math.min(e.clientY, dragStartY);
-    const w = Math.abs(e.clientX - dragStartX);
-    const h = Math.abs(e.clientY - dragStartY);
-    endAreaSelect();
-
-    if (w < 50 || h < 50) {
-      alert('너무 작은 영역입니다. 다시 설정해 주세요.');
-      return;
-    }
-    cropArea = { x: Math.round(x), y: Math.round(y), w: Math.round(w), h: Math.round(h) };
-    updateAreaUI();
-  });
-
-  overlay.addEventListener('keydown', e => {
-    if (e.key === 'Escape') endAreaSelect();
-  });
-
-  function updateAreaUI() {
-    if (!cropArea) {
-      document.getElementById('areaX').textContent = '0';
-      document.getElementById('areaY').textContent = '0';
-      document.getElementById('areaW').textContent = '전체';
-      document.getElementById('areaH').textContent = '전체';
-      document.getElementById('areaModeBadge').textContent = '전체 화면';
-      document.getElementById('areaModeBadge').className = 'text-xs px-2 py-0.5 rounded bg-neutral-800 text-neutral-400 border border-neutral-700';
-    } else {
-      document.getElementById('areaX').textContent = cropArea.x;
-      document.getElementById('areaY').textContent = cropArea.y;
-      document.getElementById('areaW').textContent = cropArea.w;
-      document.getElementById('areaH').textContent = cropArea.h;
-      document.getElementById('areaModeBadge').textContent = `${cropArea.w} × ${cropArea.h}`;
-      document.getElementById('areaModeBadge').className = 'text-xs px-2 py-0.5 rounded bg-blue-950 text-blue-300 border border-blue-700';
-    }
-  }
-
-  function resetArea() {
-    cropArea = null;
-    updateAreaUI();
-  }
-
-  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  // 3. 화면 녹화 엔진
-  //    - getDisplayMedia로 전체/창 캡처 후
-  //    - cropArea가 있으면 canvas로 실시간 크롭
-  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  let mediaRecorder = null, recordedChunks = [], captureStream = null;
-  let cropCanvas = null, cropCtx = null, cropVideo = null, cropRaf = null;
-
-  async function handleRecordToggle() {
-    if (!isRecActive) {
-      try {
-        const fps       = parseInt(document.getElementById('selFps').value) || 60;
-        const withSys   = document.getElementById('chkAudio').checked;
-        const withMic   = document.getElementById('chkMic').checked;
-
-        // 화면 캡처 (브라우저 공유 선택 창 — 웹의 보안 정책상 필수)
-        captureStream = await navigator.mediaDevices.getDisplayMedia({
-          video: { frameRate: { ideal: fps, max: fps }, displaySurface: 'monitor' },
-          audio: withSys
-        });
-
-        // 마이크 추가
-        if (withMic) {
-          try {
-            const mic = await navigator.mediaDevices.getUserMedia({ audio: true });
-            mic.getAudioTracks().forEach(t => captureStream.addTrack(t));
-          } catch(e) { console.warn('마이크 없음:', e); }
-        }
-
-        let recordStream = captureStream;
-
-        // cropArea 있으면 canvas로 실시간 크롭 처리
-        if (cropArea) {
-          cropCanvas = document.createElement('canvas');
-          cropCanvas.width  = cropArea.w;
-          cropCanvas.height = cropArea.h;
-          cropCtx = cropCanvas.getContext('2d');
-
-          cropVideo = document.createElement('video');
-          cropVideo.srcObject = captureStream;
-          cropVideo.muted = true;
-          await cropVideo.play();
-
-          function doCrop() {
-            if (!isRecActive) return;
-            cropCtx.drawImage(cropVideo, cropArea.x, cropArea.y, cropArea.w, cropArea.h, 0, 0, cropArea.w, cropArea.h);
-            cropRaf = requestAnimationFrame(doCrop);
-          }
-          cropRaf = requestAnimationFrame(doCrop);
-
-          // 오디오 트랙만 원본에서 가져옴
-          const audioTracks = captureStream.getAudioTracks();
-          const canvasStream = cropCanvas.captureStream(fps);
-          audioTracks.forEach(t => canvasStream.addTrack(t));
-          recordStream = canvasStream;
-        }
-
-        recordedChunks = [];
-        const mimes = ['video/webm;codecs=vp9,opus','video/webm;codecs=vp8,opus','video/webm','video/mp4'];
-        const mime = mimes.find(m => MediaRecorder.isTypeSupported(m)) || '';
-        mediaRecorder = new MediaRecorder(recordStream, mime ? { mimeType: mime } : {});
-        mediaRecorder.ondataavailable = e => { if (e.data?.size > 0) recordedChunks.push(e.data); };
-        mediaRecorder.onstop = () => {
-          if (cropRaf) cancelAnimationFrame(cropRaf);
-          captureStream?.getTracks().forEach(t => t.stop());
-          const blob = new Blob(recordedChunks, { type: mime || 'video/webm' });
-          const url  = URL.createObjectURL(blob);
-          document.getElementById('previewVideo').src = url;
-          const dl = document.getElementById('btnDownload');
-          dl.href = url;
-          dl.download = `SuziCam_${new Date().toISOString().replace(/[:.]/g,'-')}.webm`;
-          document.getElementById('resultCard').classList.remove('hidden');
-        };
-        mediaRecorder.start(200);
-
-        // 사용자가 브라우저 공유 중지 버튼 눌렀을 때
-        captureStream.getVideoTracks()[0].onended = () => { if (isRecActive) handleRecordToggle(); };
-
-        isRecActive = true;
-        startTimer();
-        document.getElementById('resultCard').classList.add('hidden');
-        setRecUI(true);
-      } catch(err) {
-        alert('화면 녹화 시작 실패: ' + err.message);
-      }
-    } else {
-      mediaRecorder?.state !== 'inactive' && mediaRecorder.stop();
-      isRecActive = false;
-      stopTimer();
-      setRecUI(false);
-    }
-  }
-
-  function handlePauseToggle() {
-    if (!mediaRecorder || !isRecActive) return;
-    const p  = document.getElementById('btnPause');
-    const sb = document.getElementById('statusBadge');
-    if (mediaRecorder.state === 'recording') {
-      mediaRecorder.pause(); isPaused = true; pauseStart = performance.now();
-      p.textContent = '▶ 재개';
-      p.className = 'px-4 py-3 rounded-xl font-bold text-sm bg-yellow-600 hover:bg-yellow-700 text-white cursor-pointer';
-      sb.textContent = '일시 정지';
-      sb.className = 'text-xs px-2.5 py-0.5 rounded-full bg-yellow-950 text-yellow-300 font-semibold border border-yellow-700';
-    } else if (mediaRecorder.state === 'paused') {
-      mediaRecorder.resume(); isPaused = false; pausedTotal += performance.now() - pauseStart;
-      p.textContent = '❚❚ 일시정지';
-      p.className = 'px-4 py-3 rounded-xl font-bold text-sm bg-neutral-700 hover:bg-neutral-600 text-white cursor-pointer';
-      sb.textContent = '녹화 중 (REC)';
-      sb.className = 'text-xs px-2.5 py-0.5 rounded-full bg-red-950 text-red-300 font-semibold border border-red-700 rec-pulse';
-    }
-  }
-
-  function setRecUI(recording) {
-    const btn = document.getElementById('btnRec');
-    const p   = document.getElementById('btnPause');
-    const sb  = document.getElementById('statusBadge');
-    if (recording) {
-      btn.innerHTML = '<span class="w-3 h-3 rounded-sm bg-white inline-block"></span><span>녹화 정지 (STOP)</span>';
-      btn.className = 'px-6 py-3 rounded-xl font-bold text-sm bg-neutral-800 border border-red-500 text-red-400 transition-all flex items-center space-x-2 cursor-pointer';
-      p.disabled = false;
-      p.className = 'px-4 py-3 rounded-xl font-bold text-sm bg-neutral-700 hover:bg-neutral-600 text-white cursor-pointer transition-all';
-      sb.textContent = '녹화 중 (REC)';
-      sb.className = 'text-xs px-2.5 py-0.5 rounded-full bg-red-950 text-red-300 font-semibold border border-red-700 rec-pulse';
-    } else {
-      btn.innerHTML = '<span class="w-3 h-3 rounded-full bg-white inline-block"></span><span>녹화 시작</span>';
-      btn.className = 'px-6 py-3 rounded-xl font-bold text-sm bg-red-600 hover:bg-red-700 text-white transition-all flex items-center space-x-2 cursor-pointer';
-      btn.style.boxShadow = '0 4px 15px rgba(255,0,0,0.4)';
-      p.disabled = true; p.textContent = '❚❚ 일시정지';
-      p.className = 'px-4 py-3 rounded-xl font-bold text-sm bg-neutral-800 text-neutral-500 cursor-not-allowed transition-all';
-      sb.textContent = '대기 중';
-      sb.className = 'text-xs px-2.5 py-0.5 rounded-full bg-neutral-800 text-neutral-400 font-semibold border border-neutral-700';
-    }
-  }
-
-  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  // 4. 60FPS 모션 테스트 캔버스
-  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  const mc  = document.getElementById('motionCanvas');
-  const mctx = mc.getContext('2d');
-  let bx = 15, bs = 3.5, lastFt = performance.now(), fc = 0;
-  function drawMotion(t) {
-    fc++;
-    if (t - lastFt >= 1000) {
-      document.getElementById('fpsDisplay').textContent = fc + ' FPS';
-      fc = 0; lastFt = t;
-    }
-    mctx.clearRect(0, 0, mc.width, mc.height);
-    mctx.fillStyle = '#ff4444';
-    mctx.beginPath(); mctx.arc(bx, 22, 9, 0, Math.PI*2); mctx.fill();
-    mctx.save();
-    mctx.translate(mc.width/2, 48); mctx.rotate(t/160);
-    mctx.fillStyle = '#00e5ff';
-    mctx.fillRect(-18,-2,36,4); mctx.fillRect(-2,-18,4,36);
-    mctx.restore();
-    bx += bs;
-    if (bx > mc.width-15 || bx < 15) bs = -bs;
-    requestAnimationFrame(drawMotion);
-  }
-  requestAnimationFrame(drawMotion);
-
-  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  // 5. 비프음 싱크 테스트
-  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  let audioCtx = null, beepTimer = null, beepOn = false;
-  function triggerBeep() {
-    if (!audioCtx) audioCtx = new (window.AudioContext||window.webkitAudioContext)();
-    const o = audioCtx.createOscillator(), g = audioCtx.createGain();
-    o.connect(g); g.connect(audioCtx.destination);
-    o.frequency.value = 1000; g.gain.value = 0.08;
-    o.start(); o.stop(audioCtx.currentTime + 0.08);
-  }
-  function toggleBeepSound() {
-    beepOn = !beepOn;
-    const btn = document.getElementById('btnBeep');
-    if (beepOn) {
-      btn.textContent = '🔊 비프음 끄기';
-      btn.className = 'px-3 py-1.5 rounded-lg text-xs font-semibold bg-green-700 text-white cursor-pointer';
-      triggerBeep(); beepTimer = setInterval(triggerBeep, 1000);
-    } else {
-      btn.textContent = '🔈 1초 비프음 켜기';
-      btn.className = 'px-3 py-1.5 rounded-lg text-xs font-semibold bg-neutral-800 hover:bg-neutral-700 text-yellow-300 border border-neutral-700 cursor-pointer';
-      clearInterval(beepTimer);
-    }
-  }
-
-  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  // 6. 마우스 클릭 감지
-  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  let clicks = 0;
-  function handleClickTarget() {
-    clicks++;
-    const box = document.getElementById('clickTarget');
-    document.getElementById('clickTargetText').textContent = `🎯 클릭 감지됨! (누적: ${clicks}회)`;
-    box.style.background = 'rgba(127,29,29,0.35)';
-    setTimeout(() => box.style.background = '', 120);
-  }
-  </script>
+  <script src="renderer.js"></script>
 </body>
 </html>
