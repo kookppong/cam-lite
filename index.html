@@ -51,7 +51,10 @@
       <div class="bg-black/90 border border-[#1e1f2b] rounded-xl p-4 text-center flex flex-col items-center space-y-2">
         <div class="text-[11px] text-neutral-500 tracking-widest uppercase font-medium">Recording Timer</div>
         <div id="recTimer" class="digital text-5xl font-bold timer-idle">00:00:00.000</div>
-        <span id="statusBadge" class="text-xs px-3 py-0.5 rounded-full bg-neutral-900 text-neutral-500 border border-neutral-800 font-semibold">대기 중</span>
+        <div class="flex items-center space-x-2">
+          <span id="statusBadge" class="text-xs px-3 py-0.5 rounded-full bg-neutral-900 text-neutral-500 border border-neutral-800 font-semibold">대기 중</span>
+          <span id="orientBadge" class="text-xs px-2.5 py-0.5 rounded-full bg-neutral-900 text-cyan-400 border border-neutral-800 font-medium">모니터 방향: 가로</span>
+        </div>
       </div>
 
       <!-- 녹화 영역 설정 (반디캠 방식) -->
@@ -90,21 +93,37 @@
         </div>
       </div>
 
-      <!-- 오디오 & FPS 옵션 -->
-      <div class="bg-[#13141c] border border-[#1e1f2b] rounded-xl px-4 py-3 flex items-center justify-around text-xs text-neutral-300">
-        <label class="flex items-center space-x-2 cursor-pointer">
-          <input type="checkbox" id="chkSys" checked class="accent-red-600 w-4 h-4 cursor-pointer">
-          <span>PC 소리</span>
-        </label>
-        <label class="flex items-center space-x-2 cursor-pointer">
-          <input type="checkbox" id="chkMic" class="accent-red-600 w-4 h-4 cursor-pointer">
-          <span>마이크</span>
-        </label>
-        <div class="flex items-center space-x-1.5">
-          <span>FPS:</span>
-          <select id="selFps" class="bg-neutral-800 text-white rounded px-2 py-1 border border-neutral-700 text-xs">
-            <option value="60" selected>60</option>
-            <option value="30">30</option>
+      <!-- 세로모드/화면 회전 및 오디오 & FPS 옵션 -->
+      <div class="bg-[#13141c] border border-[#1e1f2b] rounded-xl p-3 space-y-2 text-xs text-neutral-300">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center space-x-2">
+            <label class="flex items-center space-x-1.5 cursor-pointer">
+              <input type="checkbox" id="chkSys" checked class="accent-red-600 w-4 h-4 cursor-pointer">
+              <span>PC 소리</span>
+            </label>
+            <label class="flex items-center space-x-1.5 cursor-pointer">
+              <input type="checkbox" id="chkMic" class="accent-red-600 w-4 h-4 cursor-pointer">
+              <span>마이크</span>
+            </label>
+          </div>
+          <div class="flex items-center space-x-1.5">
+            <span>FPS:</span>
+            <select id="selFps" class="bg-neutral-800 text-white rounded px-2 py-1 border border-neutral-700 text-xs">
+              <option value="60" selected>60</option>
+              <option value="30">30</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- 세로모드 및 회전 제어 옵션 -->
+        <div class="flex items-center justify-between pt-1 border-t border-neutral-800/80">
+          <span class="text-neutral-400">화면 방향 / 회전:</span>
+          <select id="selRotate" onchange="onRotateSettingChange()" class="bg-neutral-800 text-cyan-400 rounded px-2 py-1 border border-neutral-700 text-xs font-medium cursor-pointer">
+            <option value="auto" selected>세로모드 자동 감지</option>
+            <option value="0">기본 (0°)</option>
+            <option value="90">시계방향 90° 회전</option>
+            <option value="180">상하 반전 180°</option>
+            <option value="270">반시계방향 270° (90° 세로)</option>
           </select>
         </div>
       </div>
@@ -127,10 +146,17 @@
       <div id="resultCard" class="hidden bg-[#13141c] border border-green-700/40 rounded-xl p-3 space-y-2">
         <div class="flex items-center justify-between">
           <span class="text-xs font-bold text-green-400">✓ 녹화 완료!</span>
-          <a id="btnDl" href="#" download="SuziCam.webm"
-            class="px-3 py-1 text-xs font-bold bg-green-700 hover:bg-green-600 text-white rounded-lg transition">💾 영상 다운로드</a>
+          <div class="flex items-center space-x-1.5">
+            <button onclick="rotatePreviewVideo()" class="px-2.5 py-1 text-xs font-semibold bg-neutral-800 hover:bg-neutral-700 text-cyan-300 rounded border border-neutral-700 transition flex items-center space-x-1 cursor-pointer">
+              <span>🔄</span><span id="lblRotateAngle">화면 90° 돌리기</span>
+            </button>
+            <a id="btnDl" href="#" download="SuziCam.webm"
+              class="px-3 py-1 text-xs font-bold bg-green-700 hover:bg-green-600 text-white rounded transition">💾 다운로드</a>
+          </div>
         </div>
-        <video id="prevVideo" controls class="w-full rounded bg-black max-h-40 border border-neutral-800"></video>
+        <div class="flex justify-center bg-black rounded p-1 overflow-hidden">
+          <video id="prevVideo" controls class="rounded max-h-56 max-w-full transition-transform duration-300"></video>
+        </div>
       </div>
 
     </div>
