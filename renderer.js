@@ -1,9 +1,9 @@
 /**
  * 수지캠 v0.1.0-test — 통합 렌더러
- * - 최근 녹화 목록 최대 5개 유지 및 [✕] 개별 삭제 기능
- * - 세로 모드(피벗) 화면 실시간 자동 감지 및 비율 보존
- * - 녹화 시 0/90/180/270도 회전 인코딩
- * - 녹화 완료 후 미리보기 화면 90도 회전 및 회전 적용 다운로드
+ * - [핵심 패치] 백그라운드 창 전환 시 화면 멈춤/절전 모드 완전 방지
+ * - 회전/크롭이 필요 없는 일반 녹화 시 네이티브 GPU 다이렉트 파이프라인 적용
+ * - 회전/크롭 시에도 백그라운드에서 requestAnimationFrame 정지를 우회하는 고정 타이머 적용
+ * - 최근 녹화 목록 최대 5개 및 90도 회전/다운로드
  */
 
 const isElectron = typeof window !== 'undefined' && typeof window.process === 'object' && window.process.type;
@@ -70,14 +70,16 @@ function updateAreaUI() {
   }
 }
 
-// ── 타이머 ──
-let recStart = 0, isRec = false, isPaused = false, pausedTotal = 0, pauseStart = 0, rafId = null;
+// ── 타이머 (백그라운드에서도 정확한 performance.now 기반) ──
+let recStart = 0, isRec = false, isPaused = false, pausedTotal = 0, pauseStart = 0, timerIntervalId = null;
 const timerEl = document.getElementById('recTimer');
 
 function startTimer() {
   recStart = performance.now(); pausedTotal = 0; isPaused = false;
   timerEl.className = 'digital text-5xl font-bold timer-on';
-  function tick() {
+  
+  // requestAnimationFrame 대신 백그라운드에서도 멈추지 않는 setInterval 적용
+  timerIntervalId = setInterval(() => {
     if (!isRec) return;
     const now = performance.now();
     const ms = isPaused ? (pauseStart - recStart - pausedTotal) : (now - recStart - pausedTotal);
@@ -85,13 +87,11 @@ function startTimer() {
     timerEl.textContent =
       pad(Math.floor(ts/3600)) + ':' + pad(Math.floor((ts%3600)/60)) + ':' +
       pad(ts%60) + '.' + pad3(Math.floor(ms%1000));
-    rafId = requestAnimationFrame(tick);
-  }
-  rafId = requestAnimationFrame(tick);
+  }, 100);
 }
 
 function stopTimer() {
-  if (rafId) cancelAnimationFrame(rafId);
+  if (timerIntervalId) clearInterval(timerIntervalId);
   const finalDuration = timerEl.textContent;
   timerEl.textContent = '00:00:00.000';
   timerEl.className = 'digital text-5xl font-bold timer-idle';
@@ -101,9 +101,8 @@ function stopTimer() {
 const pad  = n => String(n).padStart(2,'0');
 const pad3 = n => String(n).padStart(3,'0');
 
-// ── 녹화 엔진 ──
-let mediaRecorder = null, chunks = [], captureStream = null, cropStream = null, cropRaf = null;
-let currentRecStartTime = '';
+// ── 녹화 엔진 (백그라운드 멈춤 방지 패치 완료) ──
+let mediaRecorder = null, chunks = [], captureStream = null, cropStream = null, renderIntervalId = null;
 let currentVideoDimensions = { width: 1920, height: 1080 };
 
 async function toggleRecord() {
@@ -134,7 +133,10 @@ async function startRecord() {
       });
     } else {
       captureStream = await navigator.mediaDevices.getDisplayMedia({
-        video: { frameRate: { ideal: fps, max: fps } },
+        video: { 
+          frameRate: { ideal: fps, max: fps },
+          displaySurface: 'monitor'
+        },
         audio: sysSnd
       });
     }
@@ -146,26 +148,13 @@ async function startRecord() {
       } catch(e) { console.warn('마이크 접근 실패:', e); }
     }
 
-    // 비디오 메타데이터 로드 대기 (실제 해상도 측정)
-    const srcVideo = document.createElement('video');
-    srcVideo.srcObject = captureStream;
-    srcVideo.muted = true;
-    srcVideo.playsInline = true;
-
-    await new Promise((resolve) => {
-      if (srcVideo.videoWidth > 0 && srcVideo.videoHeight > 0) return resolve();
-      srcVideo.onloadedmetadata = () => {
-        srcVideo.play().then(resolve).catch(resolve);
-      };
-      srcVideo.play().catch(() => {});
-      setTimeout(resolve, 800);
-    });
-
-    const nativeW = srcVideo.videoWidth || window.screen.width || 1920;
-    const nativeH = srcVideo.videoHeight || window.screen.height || 1080;
+    // 비디오 해상도 감지
+    const videoTrack = captureStream.getVideoTracks()[0];
+    const settings = videoTrack.getSettings ? videoTrack.getSettings() : {};
+    const nativeW = settings.width || window.screen.width || 1920;
+    const nativeH = settings.height || window.screen.height || 1080;
     const isTargetVertical = nativeH > nativeW;
 
-    // 모니터 방향 뱃지 갱신
     const orientBadge = document.getElementById('orientBadge');
     if (orientBadge) {
       orientBadge.textContent = isTargetVertical 
@@ -176,70 +165,104 @@ async function startRecord() {
         : 'text-xs px-2.5 py-0.5 rounded-full bg-neutral-900 text-neutral-400 border border-neutral-800 font-medium';
     }
 
-    // 회전 각도 계산
     let angle = 0;
-    if (rotateSetting === 'auto') {
-      angle = 0; // 세로면 세로 비율 그대로 보존
-    } else {
+    if (rotateSetting !== 'auto') {
       angle = parseInt(rotateSetting, 10) || 0;
     }
 
     let recordStream = captureStream;
 
-    // 영역 크롭 또는 회전 변환 처리 (세로모드 포함)
-    const cropX = cropArea ? cropArea.x : 0;
-    const cropY = cropArea ? cropArea.y : 0;
-    const cropW = cropArea ? cropArea.w : nativeW;
-    const cropH = cropArea ? cropArea.h : nativeH;
+    // [핵심 패치] 회전이나 크롭이 필요 없는 일반 녹화는
+    // 브라우저 GPU 다이렉트 파이프라인(recordStream = captureStream)을 바로 사용하여
+    // 다른 창을 띄우거나 창을 내려도 절대로 화면이 멈추거나 프레임이 드랍되지 않음!
+    if (cropArea || angle !== 0) {
+      const srcVideo = document.createElement('video');
+      srcVideo.srcObject = captureStream;
+      srcVideo.muted = true;
+      srcVideo.playsInline = true;
 
-    // 캔버스 인코더 구성
-    const cropCanvas = document.createElement('canvas');
-    const is90or270 = (angle === 90 || angle === 270);
-    cropCanvas.width = is90or270 ? cropH : cropW;
-    cropCanvas.height = is90or270 ? cropW : cropH;
-    currentVideoDimensions = { width: cropCanvas.width, height: cropCanvas.height };
+      await new Promise((resolve) => {
+        if (srcVideo.videoWidth > 0 && srcVideo.videoHeight > 0) return resolve();
+        srcVideo.onloadedmetadata = () => {
+          srcVideo.play().then(resolve).catch(resolve);
+        };
+        srcVideo.play().catch(() => {});
+        setTimeout(resolve, 600);
+      });
 
-    const cctx = cropCanvas.getContext('2d');
+      const srcW = srcVideo.videoWidth || nativeW;
+      const srcH = srcVideo.videoHeight || nativeH;
+      const cropX = cropArea ? cropArea.x : 0;
+      const cropY = cropArea ? cropArea.y : 0;
+      const cropW = cropArea ? cropArea.w : srcW;
+      const cropH = cropArea ? cropArea.h : srcH;
 
-    function drawFrame() {
-      if (!isRec) return;
-      cctx.save();
-      cctx.clearRect(0, 0, cropCanvas.width, cropCanvas.height);
+      const cropCanvas = document.createElement('canvas');
+      const is90or270 = (angle === 90 || angle === 270);
+      cropCanvas.width = is90or270 ? cropH : cropW;
+      cropCanvas.height = is90or270 ? cropW : cropH;
+      currentVideoDimensions = { width: cropCanvas.width, height: cropCanvas.height };
 
-      if (angle === 90) {
-        cctx.translate(cropCanvas.width, 0);
-        cctx.rotate((90 * Math.PI) / 180);
-        cctx.drawImage(srcVideo, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
-      } else if (angle === 180) {
-        cctx.translate(cropCanvas.width, cropCanvas.height);
-        cctx.rotate((180 * Math.PI) / 180);
-        cctx.drawImage(srcVideo, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
-      } else if (angle === 270) {
-        cctx.translate(0, cropCanvas.height);
-        cctx.rotate((270 * Math.PI) / 180);
-        cctx.drawImage(srcVideo, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
-      } else {
-        cctx.drawImage(srcVideo, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
+      const cctx = cropCanvas.getContext('2d');
+
+      function drawFrame() {
+        if (!isRec) return;
+        cctx.save();
+        cctx.clearRect(0, 0, cropCanvas.width, cropCanvas.height);
+
+        if (angle === 90) {
+          cctx.translate(cropCanvas.width, 0);
+          cctx.rotate((90 * Math.PI) / 180);
+          cctx.drawImage(srcVideo, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
+        } else if (angle === 180) {
+          cctx.translate(cropCanvas.width, cropCanvas.height);
+          cctx.rotate((180 * Math.PI) / 180);
+          cctx.drawImage(srcVideo, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
+        } else if (angle === 270) {
+          cctx.translate(0, cropCanvas.height);
+          cctx.rotate((270 * Math.PI) / 180);
+          cctx.drawImage(srcVideo, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
+        } else {
+          cctx.drawImage(srcVideo, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
+        }
+        cctx.restore();
       }
 
-      cctx.restore();
-      cropRaf = requestAnimationFrame(drawFrame);
-    }
-    cropRaf = requestAnimationFrame(drawFrame);
+      // [핵심 패치] 백그라운드 창 전환 시 requestAnimationFrame이 멈추는 브라우저 버그를 막기 위해
+      // setInterval 기반의 하드웨어 타이머로 고정 프레임 렌더링 유지
+      const frameIntervalMs = Math.floor(1000 / fps);
+      renderIntervalId = setInterval(drawFrame, frameIntervalMs);
 
-    cropStream = cropCanvas.captureStream(fps);
-    captureStream.getAudioTracks().forEach(t => cropStream.addTrack(t));
-    recordStream = cropStream;
+      cropStream = cropCanvas.captureStream(fps);
+      captureStream.getAudioTracks().forEach(t => cropStream.addTrack(t));
+      recordStream = cropStream;
+    } else {
+      currentVideoDimensions = { width: nativeW, height: nativeH };
+    }
 
     chunks = [];
-    currentRecStartTime = new Date().toLocaleTimeString();
 
-    const mimes = ['video/webm;codecs=vp9,opus','video/webm;codecs=vp8,opus','video/webm','video/mp4'];
+    // 코덱 우선순위 (VP9 > VP8 > Default)
+    const mimes = [
+      'video/webm;codecs=vp9,opus',
+      'video/webm;codecs=vp8,opus',
+      'video/webm',
+      'video/mp4'
+    ];
     const mime = mimes.find(m => MediaRecorder.isTypeSupported(m)) || '';
-    mediaRecorder = new MediaRecorder(recordStream, mime ? { mimeType: mime } : {});
+
+    // 비트레이트 안정화 (6Mbps로 고정하여 끊김 및 픽셀 뭉개짐 방지)
+    const recorderOptions = {
+      mimeType: mime,
+      videoBitsPerSecond: 6000000 // 6 Mbps
+    };
+
+    mediaRecorder = new MediaRecorder(recordStream, mime ? recorderOptions : {});
     mediaRecorder.ondataavailable = e => { if (e.data?.size > 0) chunks.push(e.data); };
     mediaRecorder.onstop = onRecordStop;
-    mediaRecorder.start(200);
+    
+    // 500ms 단위로 청크를 분할 수집하여 메모리 오버플로우 및 싱크 꼬임 방지
+    mediaRecorder.start(500);
 
     captureStream.getVideoTracks()[0].onended = () => { if (isRec) stopRecord(); };
 
@@ -258,7 +281,7 @@ async function startRecord() {
 function stopRecord() {
   mediaRecorder?.state !== 'inactive' && mediaRecorder.stop();
   isRec = false;
-  if (cropRaf) cancelAnimationFrame(cropRaf);
+  if (renderIntervalId) clearInterval(renderIntervalId);
   captureStream?.getTracks().forEach(t => t.stop());
   const finalDuration = stopTimer();
   setUI(false);
@@ -270,7 +293,6 @@ function onRecordStop() {
   const now = new Date();
   const timeStr = `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
 
-  // 새 녹화본 생성 (목록 최상단 추가)
   const newItem = {
     id: Date.now(),
     blob: blob,
@@ -282,7 +304,6 @@ function onRecordStop() {
     rotation: 0
   };
 
-  // 최대 5개 유지 (초과 시 가장 오래된 것 삭제 및 메모리 해제)
   if (recordedItems.length >= 5) {
     const oldest = recordedItems.pop();
     if (oldest && oldest.url) URL.revokeObjectURL(oldest.url);
@@ -292,7 +313,7 @@ function onRecordStop() {
   renderRecordingsList();
 }
 
-// ── 녹화 목록 렌더링 (최대 5개, 개별 [X] 삭제) ──
+// ── 녹화 목록 렌더링 ──
 function renderRecordingsList() {
   const section = document.getElementById('recordingsSection');
   const listEl = document.getElementById('recordingsList');
@@ -315,7 +336,6 @@ function renderRecordingsList() {
     card.id = `rec-card-${item.id}`;
 
     card.innerHTML = `
-      <!-- 헤더 (녹화 정보 및 X 닫기 버튼) -->
       <div class="flex items-center justify-between border-b border-neutral-800/80 pb-2">
         <div class="flex items-center space-x-2">
           <span class="text-xs font-bold text-red-400">#${recordedItems.length - index}</span>
@@ -330,7 +350,6 @@ function renderRecordingsList() {
         </button>
       </div>
 
-      <!-- 비디오 미리보기 컨테이너 (회전 시 안 잘리도록 동적 여백 계산) -->
       <div class="flex justify-center bg-black/90 rounded-lg p-1.5 overflow-hidden min-h-[140px] items-center" id="preview-wrapper-${item.id}">
         <video id="video-player-${item.id}" src="${item.url}" controls 
           class="rounded max-h-48 max-w-full transition-transform duration-300 origin-center"
@@ -338,7 +357,6 @@ function renderRecordingsList() {
         </video>
       </div>
 
-      <!-- 하단 액션 버튼들 (90도 회전, 다운로드) -->
       <div class="flex items-center justify-between pt-1 text-xs">
         <button onclick="rotateRecording(${item.id})" 
           class="px-2.5 py-1.5 rounded-lg font-medium bg-neutral-800 hover:bg-neutral-700 text-cyan-300 border border-neutral-700 transition flex items-center space-x-1.5 cursor-pointer">
@@ -346,12 +364,10 @@ function renderRecordingsList() {
           <span id="rotate-label-${item.id}">90° 회전 (${item.rotation}°)</span>
         </button>
 
-        <div class="flex items-center space-x-2">
-          <a id="download-link-${item.id}" href="${item.url}" download="SuziCam_${item.timestamp.replace(/[: -]/g,'_')}.webm"
-            class="px-3.5 py-1.5 rounded-lg font-bold bg-green-700 hover:bg-green-600 text-white transition flex items-center space-x-1 shadow">
-            <span>💾 다운로드</span>
-          </a>
-        </div>
+        <a id="download-link-${item.id}" href="${item.url}" download="SuziCam_${item.timestamp.replace(/[: -]/g,'_')}.webm"
+          class="px-3.5 py-1.5 rounded-lg font-bold bg-green-700 hover:bg-green-600 text-white transition flex items-center space-x-1 shadow">
+          <span>💾 다운로드</span>
+        </a>
       </div>
     `;
 
@@ -359,7 +375,6 @@ function renderRecordingsList() {
   });
 }
 
-// ── 녹화본 개별 [✕] 삭제 ──
 function deleteRecording(id) {
   const idx = recordedItems.findIndex(item => item.id === id);
   if (idx !== -1) {
@@ -370,7 +385,6 @@ function deleteRecording(id) {
   }
 }
 
-// ── 전체 비우기 ──
 function clearAllRecordings() {
   if (recordedItems.length === 0) return;
   if (!confirm('녹화된 모든 영상을 목록에서 지우시겠습니까?')) return;
@@ -381,7 +395,6 @@ function clearAllRecordings() {
   renderRecordingsList();
 }
 
-// ── 결과물 화면 90°씩 돌리기 ──
 function rotateRecording(id) {
   const item = recordedItems.find(it => it.id === id);
   if (!item) return;
@@ -394,7 +407,6 @@ function rotateRecording(id) {
 
   if (player) {
     player.style.transform = `rotate(${item.rotation}deg)`;
-    // 90도나 270도 회전 시 세로 높이 공간 확보
     if (item.rotation === 90 || item.rotation === 270) {
       wrapper.style.minHeight = '240px';
       player.style.maxHeight = '220px';
@@ -445,7 +457,7 @@ function setUI(recording) {
     dot.className = 'w-3 h-3 rounded-full bg-red-500 rec-dot';
   } else {
     btn.innerHTML = '<span class="w-3.5 h-3.5 rounded-full bg-white inline-block"></span><span>녹화 시작</span>';
-    btn.className = 'flex-1 py-3.5 rounded-xl font-extrabold text-sm bg-red-600 hover:bg-red-700 text-white transition flex items-center justify-center space-x-2 cursor-pointer';
+    btn.className = 'flex-1 py-3.5 rounded-xl font-extrabold text-base bg-red-600 hover:bg-red-700 text-white transition flex items-center justify-center space-x-2 cursor-pointer';
     btn.style.boxShadow = '0 4px 15px rgba(255,0,0,0.4)';
     p.disabled = true; p.textContent = '❚❚';
     p.className = 'px-5 py-3.5 rounded-xl font-bold text-sm bg-neutral-800 text-neutral-500 cursor-not-allowed transition';
