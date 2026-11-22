@@ -2,11 +2,12 @@
   "name": "suzicam",
   "version": "0.1.0-test",
   "description": "수지캠 (SuziCam) - PC 화면 녹화기 및 웹 테스트",
+  "author": "kookppong",
   "main": "main.js",
   "homepage": "https://kookppong.github.io/cam-lite/",
   "scripts": {
     "start": "electron .",
-    "dist": "electron-builder --win nsis portable",
+    "dist": "electron-builder --win nsis portable --publish never",
     "pack": "electron-builder --dir"
   },
   "build": {
