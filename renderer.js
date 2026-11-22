@@ -1,9 +1,9 @@
 /**
  * 수지캠 v0.1.0-test — 통합 렌더러
- * - [핵심 패치] 백그라운드 창 전환 시 화면 멈춤/절전 모드 완전 방지
- * - 회전/크롭이 필요 없는 일반 녹화 시 네이티브 GPU 다이렉트 파이프라인 적용
- * - 회전/크롭 시에도 백그라운드에서 requestAnimationFrame 정지를 우회하는 고정 타이머 적용
- * - 최근 녹화 목록 최대 5개 및 90도 회전/다운로드
+ * - 타이틀바 화면내리기/종료 버튼 연동
+ * - 다중/서브 모니터 영역 드래그 및 타겟 모니터 매칭
+ * - 특정 프로그램 창 선택 녹화 모드 지원
+ * - 백그라운드 절전 방지 및 최근 녹화 5개 목록
  */
 
 const isElectron = typeof window !== 'undefined' && typeof window.process === 'object' && window.process.type;
@@ -12,22 +12,80 @@ let ipcRenderer = null;
 if (isElectron) {
   try {
     ipcRenderer = require('electron').ipcRenderer;
+    window.ipcRenderer = ipcRenderer;
   } catch (e) {
     console.warn('Electron IPC 로드 실패:', e);
   }
 }
 
-// ── 최근 녹화 목록 (최대 5개 관리) ──
-let recordedItems = []; // { id, blob, url, duration, timestamp, width, height, rotation }
+// ── 타이틀바 창 제어 ──
+function minimizeApp() {
+  if (ipcRenderer) {
+    ipcRenderer.send('win-minimize');
+  }
+}
 
-// ── 영역 정보 ──
-let cropArea = null; // null = 전체 화면
+function closeApp() {
+  if (ipcRenderer) {
+    ipcRenderer.send('win-close');
+  } else {
+    window.close();
+  }
+}
+window.minimizeApp = minimizeApp;
+window.closeApp = closeApp;
 
+// ── 녹화 모드 관리 ('screen' | 'area' | 'window') ──
+let currentMode = 'screen';
+let targetWindowSource = null;
+let cropArea = null;
+
+function setRecordMode(mode) {
+  currentMode = mode;
+  const btnScreen = document.getElementById('btnModeScreen');
+  const btnArea = document.getElementById('btnModeArea');
+  const btnWindow = document.getElementById('btnModeWindow');
+  const badge = document.getElementById('targetModeBadge');
+  const panelArea = document.getElementById('panelAreaInfo');
+  const panelWindow = document.getElementById('panelWindowInfo');
+
+  // 버튼 스타일 초기화
+  const defaultClass = 'py-2.5 px-2 rounded-xl text-xs font-bold bg-neutral-800 hover:bg-neutral-700 text-neutral-300 border border-neutral-700 transition cursor-pointer flex flex-col items-center space-y-1';
+  const activeClass = 'py-2.5 px-2 rounded-xl text-xs font-bold bg-blue-700 hover:bg-blue-600 text-white border border-blue-500 shadow-md transition cursor-pointer flex flex-col items-center space-y-1';
+  const activeWinClass = 'py-2.5 px-2 rounded-xl text-xs font-bold bg-purple-700 hover:bg-purple-600 text-white border border-purple-500 shadow-md transition cursor-pointer flex flex-col items-center space-y-1';
+
+  btnScreen.className = defaultClass;
+  btnArea.className = defaultClass;
+  btnWindow.className = defaultClass;
+
+  panelArea.classList.add('hidden');
+  panelWindow.classList.add('hidden');
+
+  if (mode === 'screen') {
+    btnScreen.className = activeClass;
+    badge.textContent = '전체 화면 모드';
+    badge.className = 'text-xs px-2.5 py-0.5 rounded bg-blue-950 text-blue-300 border border-blue-800 font-medium';
+    cropArea = null;
+  } else if (mode === 'area') {
+    btnArea.className = activeClass;
+    badge.textContent = cropArea ? `영역: ${cropArea.w}×${cropArea.h}` : '영역 지정 모드';
+    badge.className = 'text-xs px-2.5 py-0.5 rounded bg-blue-950 text-cyan-300 border border-blue-700 font-medium';
+    panelArea.classList.remove('hidden');
+  } else if (mode === 'window') {
+    btnWindow.className = activeWinClass;
+    badge.textContent = targetWindowSource ? `창: ${targetWindowSource.name.slice(0, 15)}...` : '창 선택 모드';
+    badge.className = 'text-xs px-2.5 py-0.5 rounded bg-purple-950 text-purple-300 border border-purple-700 font-medium';
+    panelWindow.classList.remove('hidden');
+  }
+}
+window.setRecordMode = setRecordMode;
+
+// ── 다중 모니터 영역 선택 수신 ──
 if (isElectron && ipcRenderer) {
   ipcRenderer.on('area-result', (_e, area) => {
-    cropArea = area;
+    cropArea = area; // { x, y, w, h, displayId, displayName }
     updateAreaUI();
-    document.getElementById('btnArea').textContent = '🖱️ 영역 재설정';
+    setRecordMode('area');
   });
 }
 
@@ -38,7 +96,7 @@ function openAreaSelector() {
     alert(
       '[웹 브라우저 안내]\n\n' +
       '크롬/엣지 웹 브라우저는 보안 정책상 창 밖의 PC 전체 화면 드래그를 차단합니다.\n\n' +
-      '바탕화면 전체 자유 영역 지정은 상단의 [설치형 .exe] 프로그램을 실행해 주세요!'
+      '서브 모니터 및 바탕화면 전체 영역 지정은 [설치형 .exe] 프로그램을 실행해 주세요!'
     );
   }
 }
@@ -46,31 +104,91 @@ function openAreaSelector() {
 function resetArea() {
   cropArea = null;
   updateAreaUI();
-  document.getElementById('btnArea').textContent = '🖱️ 화면에서 영역 직접 설정';
 }
 
 function updateAreaUI() {
+  const areaW = document.getElementById('areaW');
+  const areaH = document.getElementById('areaH');
+  const areaX = document.getElementById('areaX');
+  const areaY = document.getElementById('areaY');
+  const modeBadge = document.getElementById('areaModeBadge');
+
   if (!cropArea) {
-    document.getElementById('areaX').textContent = '-';
-    document.getElementById('areaY').textContent = '-';
-    document.getElementById('areaW').textContent = '전체';
-    document.getElementById('areaH').textContent = '전체';
-    document.getElementById('areaModeBadge').textContent = '전체 화면';
-    document.getElementById('areaModeBadge').className =
-      'text-xs px-2 py-0.5 rounded bg-neutral-800 text-neutral-400 border border-neutral-700';
+    areaX.textContent = '-';
+    areaY.textContent = '-';
+    areaW.textContent = '전체';
+    areaH.textContent = '전체';
+    modeBadge.textContent = '전체 화면';
+    modeBadge.className = 'text-xs px-2 py-0.5 rounded bg-neutral-800 text-neutral-400 border border-neutral-700';
   } else {
-    document.getElementById('areaX').textContent = cropArea.x;
-    document.getElementById('areaY').textContent = cropArea.y;
-    document.getElementById('areaW').textContent = cropArea.w;
-    document.getElementById('areaH').textContent = cropArea.h;
-    const isVert = cropArea.h > cropArea.w;
-    document.getElementById('areaModeBadge').textContent = `${cropArea.w} × ${cropArea.h} (${isVert ? '세로' : '가로'})`;
-    document.getElementById('areaModeBadge').className =
-      'text-xs px-2 py-0.5 rounded bg-blue-950 text-blue-300 border border-blue-700';
+    areaX.textContent = cropArea.x;
+    areaY.textContent = cropArea.y;
+    areaW.textContent = cropArea.w;
+    areaH.textContent = cropArea.h;
+    modeBadge.textContent = `${cropArea.displayName || '모니터'} (${cropArea.w}×${cropArea.h})`;
+    modeBadge.className = 'text-xs px-2 py-0.5 rounded bg-blue-950 text-blue-300 border border-blue-700';
   }
 }
 
-// ── 타이머 (백그라운드에서도 정확한 performance.now 기반) ──
+// ── 창 선택 모달 (프로그램 창 목록) ──
+async function openWindowSelectModal() {
+  const modal = document.getElementById('modalWindowSelect');
+  const container = document.getElementById('windowListContainer');
+  modal.classList.remove('hidden');
+  container.innerHTML = '<div class="text-xs text-neutral-400 text-center py-8">열려 있는 프로그램 창을 검색하는 중...</div>';
+
+  if (isElectron && ipcRenderer) {
+    try {
+      const windows = await ipcRenderer.invoke('get-window-sources');
+      if (!windows || windows.length === 0) {
+        container.innerHTML = '<div class="text-xs text-neutral-400 text-center py-8">선택 가능한 창이 없습니다.</div>';
+        return;
+      }
+
+      container.innerHTML = '';
+      windows.forEach(win => {
+        const item = document.createElement('div');
+        item.className = 'flex items-center space-x-3 p-2.5 rounded-xl bg-neutral-900/80 hover:bg-neutral-800 border border-neutral-800 hover:border-purple-500 cursor-pointer transition';
+        item.onclick = () => selectTargetWindow(win);
+
+        item.innerHTML = `
+          <img src="${win.thumbnail}" class="w-20 h-12 object-cover rounded bg-black border border-neutral-700 flex-shrink-0" />
+          <div class="flex-1 truncate text-left">
+            <div class="text-xs font-bold text-white truncate">${win.name}</div>
+          </div>
+        `;
+        container.appendChild(item);
+      });
+    } catch(err) {
+      container.innerHTML = `<div class="text-xs text-red-400 text-center py-8">창 목록 로드 실패: ${err.message}</div>`;
+    }
+  } else {
+    // 웹 브라우저 모드: 화면 공유 요청 시 '창' 탭 선택하도록 안내
+    container.innerHTML = `
+      <div class="bg-neutral-900 border border-neutral-800 rounded-xl p-4 text-center space-y-3">
+        <div class="text-xs text-neutral-300 leading-relaxed">
+          웹 브라우저에서는 [녹화 시작]을 누르면 뜨는 브라우저 화면 공유 창에서 <strong>[창] 탭</strong>을 선택하시면 특정 프로그램만 녹화할 수 있습니다.
+        </div>
+        <button onclick="closeWindowSelectModal()" class="px-4 py-2 bg-purple-700 text-white rounded-lg text-xs font-bold">확인</button>
+      </div>
+    `;
+  }
+}
+window.openWindowSelectModal = openWindowSelectModal;
+
+function closeWindowSelectModal() {
+  document.getElementById('modalWindowSelect').classList.add('hidden');
+}
+window.closeWindowSelectModal = closeWindowSelectModal;
+
+function selectTargetWindow(win) {
+  targetWindowSource = win;
+  document.getElementById('selectedWindowName').textContent = win.name;
+  closeWindowSelectModal();
+  setRecordMode('window');
+}
+
+// ── 타이머 ──
 let recStart = 0, isRec = false, isPaused = false, pausedTotal = 0, pauseStart = 0, timerIntervalId = null;
 const timerEl = document.getElementById('recTimer');
 
@@ -78,7 +196,6 @@ function startTimer() {
   recStart = performance.now(); pausedTotal = 0; isPaused = false;
   timerEl.className = 'digital text-5xl font-bold timer-on';
   
-  // requestAnimationFrame 대신 백그라운드에서도 멈추지 않는 setInterval 적용
   timerIntervalId = setInterval(() => {
     if (!isRec) return;
     const now = performance.now();
@@ -101,7 +218,8 @@ function stopTimer() {
 const pad  = n => String(n).padStart(2,'0');
 const pad3 = n => String(n).padStart(3,'0');
 
-// ── 녹화 엔진 (백그라운드 멈춤 방지 패치 완료) ──
+// ── 최근 녹화 목록 (최대 5개 관리) ──
+let recordedItems = [];
 let mediaRecorder = null, chunks = [], captureStream = null, cropStream = null, renderIntervalId = null;
 let currentVideoDimensions = { width: 1920, height: 1080 };
 
@@ -118,24 +236,40 @@ async function startRecord() {
     const rotateSetting = document.getElementById('selRotate').value;
 
     if (isElectron && ipcRenderer) {
-      const sources = await ipcRenderer.invoke('get-screen-sources');
-      const src = sources[0];
+      // 1. 녹화 타겟 소스 ID 결정
+      let targetSourceId = null;
+
+      if (currentMode === 'window' && targetWindowSource) {
+        // [창 선택 모드]
+        targetSourceId = targetWindowSource.id;
+      } else {
+        // [전체 화면 또는 영역 지정 모드]
+        const screenSources = await ipcRenderer.invoke('get-screen-sources');
+        if (cropArea && cropArea.displayId) {
+          // 서브모니터 매칭
+          const matched = screenSources.find(s => s.display_id === cropArea.displayId);
+          targetSourceId = matched ? matched.id : screenSources[0].id;
+        } else {
+          targetSourceId = screenSources[0].id;
+        }
+      }
 
       captureStream = await navigator.mediaDevices.getUserMedia({
         audio: sysSnd ? { mandatory: { chromeMediaSource: 'desktop' } } : false,
         video: {
           mandatory: {
             chromeMediaSource: 'desktop',
-            chromeMediaSourceId: src.id,
+            chromeMediaSourceId: targetSourceId,
             maxFrameRate: fps
           }
         }
       });
     } else {
+      // 일반 웹 브라우저
       captureStream = await navigator.mediaDevices.getDisplayMedia({
         video: { 
           frameRate: { ideal: fps, max: fps },
-          displaySurface: 'monitor'
+          displaySurface: currentMode === 'window' ? 'window' : 'monitor'
         },
         audio: sysSnd
       });
@@ -172,10 +306,8 @@ async function startRecord() {
 
     let recordStream = captureStream;
 
-    // [핵심 패치] 회전이나 크롭이 필요 없는 일반 녹화는
-    // 브라우저 GPU 다이렉트 파이프라인(recordStream = captureStream)을 바로 사용하여
-    // 다른 창을 띄우거나 창을 내려도 절대로 화면이 멈추거나 프레임이 드랍되지 않음!
-    if (cropArea || angle !== 0) {
+    // 영역 크롭 또는 회전이 필요한 경우 캔버스 처리
+    if ((currentMode === 'area' && cropArea) || angle !== 0) {
       const srcVideo = document.createElement('video');
       srcVideo.srcObject = captureStream;
       srcVideo.muted = true;
@@ -228,8 +360,6 @@ async function startRecord() {
         cctx.restore();
       }
 
-      // [핵심 패치] 백그라운드 창 전환 시 requestAnimationFrame이 멈추는 브라우저 버그를 막기 위해
-      // setInterval 기반의 하드웨어 타이머로 고정 프레임 렌더링 유지
       const frameIntervalMs = Math.floor(1000 / fps);
       renderIntervalId = setInterval(drawFrame, frameIntervalMs);
 
@@ -242,7 +372,6 @@ async function startRecord() {
 
     chunks = [];
 
-    // 코덱 우선순위 (VP9 > VP8 > Default)
     const mimes = [
       'video/webm;codecs=vp9,opus',
       'video/webm;codecs=vp8,opus',
@@ -251,17 +380,14 @@ async function startRecord() {
     ];
     const mime = mimes.find(m => MediaRecorder.isTypeSupported(m)) || '';
 
-    // 비트레이트 안정화 (6Mbps로 고정하여 끊김 및 픽셀 뭉개짐 방지)
     const recorderOptions = {
       mimeType: mime,
-      videoBitsPerSecond: 6000000 // 6 Mbps
+      videoBitsPerSecond: 6000000
     };
 
     mediaRecorder = new MediaRecorder(recordStream, mime ? recorderOptions : {});
     mediaRecorder.ondataavailable = e => { if (e.data?.size > 0) chunks.push(e.data); };
     mediaRecorder.onstop = onRecordStop;
-    
-    // 500ms 단위로 청크를 분할 수집하여 메모리 오버플로우 및 싱크 꼬임 방지
     mediaRecorder.start(500);
 
     captureStream.getVideoTracks()[0].onended = () => { if (isRec) stopRecord(); };
@@ -436,7 +562,7 @@ function togglePause() {
     p.textContent = '❚❚';
     p.className = 'px-5 py-3.5 rounded-xl font-bold text-sm bg-neutral-700 hover:bg-neutral-600 text-white cursor-pointer transition';
     sb.textContent = '녹화 중';
-    sb.className = 'text-xs px-3 py-0.5 rounded-full bg-red-950 text-red-300 border border-red-700 font-semibold rec-dot';
+    sb.className = 'text-xs px-3 py-1 rounded-full bg-red-950 text-red-300 border border-red-700 font-semibold rec-dot';
   }
 }
 
@@ -452,7 +578,7 @@ function setUI(recording) {
     p.disabled = false;
     p.className = 'px-5 py-3.5 rounded-xl font-bold text-sm bg-neutral-700 hover:bg-neutral-600 text-white cursor-pointer transition';
     sb.textContent = '녹화 중';
-    sb.className = 'text-xs px-3 py-0.5 rounded-full bg-red-950 text-red-300 border border-red-700 font-semibold';
+    sb.className = 'text-xs px-3 py-1 rounded-full bg-red-950 text-red-300 border border-red-700 font-semibold';
     dot.style.animation = '';
     dot.className = 'w-3 h-3 rounded-full bg-red-500 rec-dot';
   } else {
@@ -462,8 +588,12 @@ function setUI(recording) {
     p.disabled = true; p.textContent = '❚❚';
     p.className = 'px-5 py-3.5 rounded-xl font-bold text-sm bg-neutral-800 text-neutral-500 cursor-not-allowed transition';
     sb.textContent = '대기 중';
-    sb.className = 'text-xs px-3 py-0.5 rounded-full bg-neutral-900 text-neutral-500 border border-neutral-800 font-semibold';
+    sb.className = 'text-xs px-3 py-1 rounded-full bg-neutral-900 text-neutral-500 border border-neutral-800 font-semibold';
     dot.className = 'w-3 h-3 rounded-full bg-red-600';
     dot.style.animation = 'none';
   }
 }
+
+document.addEventListener('DOMContentLoaded', () => {
+  setRecordMode('screen');
+});

@@ -22,7 +22,6 @@
     .drag-region { -webkit-app-region: drag; }
     .no-drag     { -webkit-app-region: no-drag; }
 
-    /* 커스텀 스크롤바 */
     ::-webkit-scrollbar { width: 6px; }
     ::-webkit-scrollbar-track { background: #12131a; }
     ::-webkit-scrollbar-thumb { background: #2b2d3a; border-radius: 3px; }
@@ -32,25 +31,25 @@
 <body class="flex flex-col items-center justify-start p-3 py-4">
 
   <!-- 메인 창 컨테이너 -->
-  <div class="w-full max-w-lg bg-[#181920] border border-[#2b2d3a] rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[95vh]">
+  <div class="w-full max-w-lg bg-[#181920] border border-[#2b2d3a] rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[95vh] relative">
 
-    <!-- 타이틀바 -->
+    <!-- 타이틀바 (화면내리기/닫기 버튼) -->
     <div class="drag-region flex items-center justify-between px-4 py-3 bg-[#0a0b10] border-b border-[#1e1f2b] flex-shrink-0">
       <div class="flex items-center space-x-2">
         <span class="w-3 h-3 rounded-full bg-red-600 inline-block" id="recDot" style="box-shadow:0 0 6px #ff3333"></span>
         <span class="text-sm font-extrabold text-white tracking-wide">수지캠 (SUZICAM)</span>
-        <span class="text-xs px-1.5 py-0.5 bg-red-950 text-red-300 border border-red-800 rounded font-bold">v0.1.0-test</span>
+        <span class="text-xs px-1.5 py-0.5 bg-red-950 text-red-300 border border-red-800 rounded font-bold">v0.1.1-test</span>
       </div>
       <div class="no-drag flex items-center space-x-1">
-        <button onclick="if(window.ipcRenderer) ipcRenderer.send('win-minimize')"
-          class="w-7 h-7 rounded hover:bg-[#2b2d3a] text-neutral-400 hover:text-white text-xs flex items-center justify-center cursor-pointer">─</button>
-        <button onclick="if(window.ipcRenderer) ipcRenderer.send('win-close')"
-          class="w-7 h-7 rounded hover:bg-red-700 text-neutral-400 hover:text-white text-xs flex items-center justify-center cursor-pointer">✕</button>
+        <button onclick="minimizeApp()" title="화면 내리기 (최소화)"
+          class="w-7 h-7 rounded hover:bg-[#2b2d3a] text-neutral-400 hover:text-white text-xs flex items-center justify-center cursor-pointer transition">─</button>
+        <button onclick="closeApp()" title="프로그램 종료"
+          class="w-7 h-7 rounded hover:bg-red-700 text-neutral-400 hover:text-white text-xs flex items-center justify-center cursor-pointer transition">✕</button>
       </div>
     </div>
 
     <!-- 스크롤 가능한 본문 영역 -->
-    <div class="p-4 space-y-3 overflow-y-auto flex-1">
+    <div class="p-4 space-y-3.5 overflow-y-auto flex-1">
 
       <!-- 타이머 및 상태 -->
       <div class="bg-black/90 border border-[#1e1f2b] rounded-xl p-4 text-center flex flex-col items-center space-y-2">
@@ -62,38 +61,69 @@
         </div>
       </div>
 
-      <!-- 녹화 영역 설정 (반디캠 방식) -->
-      <div class="bg-[#13141c] border border-[#1e1f2b] rounded-xl p-3.5 space-y-2.5">
+      <!-- 녹화 모드 탭 (전체 화면 / 영역 지정 / 특정 창 선택) -->
+      <div class="bg-[#13141c] border border-[#1e1f2b] rounded-xl p-3.5 space-y-3">
         <div class="flex items-center justify-between">
-          <span class="text-xs font-bold text-neutral-200">📐 녹화 영역 지정</span>
-          <span id="areaModeBadge" class="text-xs px-2 py-0.5 rounded bg-neutral-800 text-neutral-400 border border-neutral-700">전체 화면</span>
+          <span class="text-xs font-bold text-neutral-200">🎯 녹화 대상 선택</span>
+          <span id="targetModeBadge" class="text-xs px-2.5 py-0.5 rounded bg-blue-950 text-blue-300 border border-blue-800 font-medium">전체 화면 모드</span>
         </div>
-        <div class="grid grid-cols-4 gap-2 text-xs">
-          <div class="bg-black/60 border border-neutral-800 rounded-lg p-2 text-center">
-            <div class="text-neutral-500 mb-0.5">X</div>
-            <div id="areaX" class="text-cyan-400 font-mono font-bold">-</div>
-          </div>
-          <div class="bg-black/60 border border-neutral-800 rounded-lg p-2 text-center">
-            <div class="text-neutral-500 mb-0.5">Y</div>
-            <div id="areaY" class="text-cyan-400 font-mono font-bold">-</div>
-          </div>
-          <div class="bg-black/60 border border-neutral-800 rounded-lg p-2 text-center">
-            <div class="text-neutral-500 mb-0.5">너비</div>
-            <div id="areaW" class="text-cyan-400 font-mono font-bold">전체</div>
-          </div>
-          <div class="bg-black/60 border border-neutral-800 rounded-lg p-2 text-center">
-            <div class="text-neutral-500 mb-0.5">높이</div>
-            <div id="areaH" class="text-cyan-400 font-mono font-bold">전체</div>
-          </div>
-        </div>
-        <div class="flex space-x-2 pt-0.5">
-          <button id="btnArea" onclick="openAreaSelector()"
-            class="flex-1 py-2.5 rounded-xl text-xs font-bold bg-blue-700 hover:bg-blue-600 text-white transition cursor-pointer">
-            🖱️ 화면에서 영역 직접 설정
+
+        <div class="grid grid-cols-3 gap-2">
+          <button id="btnModeScreen" onclick="setRecordMode('screen')"
+            class="py-2.5 px-2 rounded-xl text-xs font-bold bg-neutral-800 hover:bg-neutral-700 text-neutral-300 border border-neutral-700 transition cursor-pointer flex flex-col items-center space-y-1">
+            <span>🖥️ 전체 화면</span>
           </button>
-          <button onclick="resetArea()"
-            class="px-3.5 py-2.5 rounded-xl text-xs font-bold bg-neutral-800 hover:bg-neutral-700 text-neutral-300 border border-neutral-700 cursor-pointer transition">
-            초기화
+          <button id="btnModeArea" onclick="setRecordMode('area')"
+            class="py-2.5 px-2 rounded-xl text-xs font-bold bg-neutral-800 hover:bg-neutral-700 text-neutral-300 border border-neutral-700 transition cursor-pointer flex flex-col items-center space-y-1">
+            <span>📐 영역 지정</span>
+          </button>
+          <button id="btnModeWindow" onclick="setRecordMode('window')"
+            class="py-2.5 px-2 rounded-xl text-xs font-bold bg-neutral-800 hover:bg-neutral-700 text-neutral-300 border border-neutral-700 transition cursor-pointer flex flex-col items-center space-y-1">
+            <span>🪟 창 선택</span>
+          </button>
+        </div>
+
+        <!-- 영역 지정 모드 상세 패널 -->
+        <div id="panelAreaInfo" class="space-y-2 pt-1 hidden">
+          <div class="grid grid-cols-4 gap-2 text-xs">
+            <div class="bg-black/60 border border-neutral-800 rounded-lg p-2 text-center">
+              <div class="text-neutral-500 mb-0.5">X</div>
+              <div id="areaX" class="text-cyan-400 font-mono font-bold">-</div>
+            </div>
+            <div class="bg-black/60 border border-neutral-800 rounded-lg p-2 text-center">
+              <div class="text-neutral-500 mb-0.5">Y</div>
+              <div id="areaY" class="text-cyan-400 font-mono font-bold">-</div>
+            </div>
+            <div class="bg-black/60 border border-neutral-800 rounded-lg p-2 text-center">
+              <div class="text-neutral-500 mb-0.5">너비</div>
+              <div id="areaW" class="text-cyan-400 font-mono font-bold">전체</div>
+            </div>
+            <div class="bg-black/60 border border-neutral-800 rounded-lg p-2 text-center">
+              <div class="text-neutral-500 mb-0.5">높이</div>
+              <div id="areaH" class="text-cyan-400 font-mono font-bold">전체</div>
+            </div>
+          </div>
+          <div class="flex space-x-2">
+            <button id="btnAreaAction" onclick="openAreaSelector()"
+              class="flex-1 py-2 rounded-xl text-xs font-bold bg-blue-700 hover:bg-blue-600 text-white transition cursor-pointer">
+              🖱️ 다중/서브 모니터에서 영역 드래그
+            </button>
+            <button onclick="resetArea()"
+              class="px-3.5 py-2 rounded-xl text-xs font-bold bg-neutral-800 hover:bg-neutral-700 text-neutral-300 border border-neutral-700 cursor-pointer transition">
+              초기화
+            </button>
+          </div>
+        </div>
+
+        <!-- 창 선택 모드 상세 패널 -->
+        <div id="panelWindowInfo" class="space-y-2 pt-1 hidden">
+          <div class="bg-black/60 border border-neutral-800 rounded-xl p-3 flex items-center justify-between text-xs">
+            <span class="text-neutral-400">선택된 창:</span>
+            <span id="selectedWindowName" class="font-bold text-cyan-400 truncate max-w-[240px]">창을 선택하세요</span>
+          </div>
+          <button onclick="openWindowSelectModal()"
+            class="w-full py-2.5 rounded-xl text-xs font-bold bg-purple-700 hover:bg-purple-600 text-white transition cursor-pointer flex items-center justify-center space-x-1.5">
+            <span>🪟 실행 중인 창 목록에서 선택하기</span>
           </button>
         </div>
       </div>
@@ -158,7 +188,6 @@
           </button>
         </div>
 
-        <!-- 녹화본 카드 리스트가 동적으로 렌더링되는 컨테이너 -->
         <div id="recordingsList" class="space-y-3"></div>
       </div>
 
@@ -166,10 +195,24 @@
 
     <!-- 푸터 -->
     <div class="px-4 py-2.5 bg-[#0a0b10] border-t border-[#1e1f2b] flex items-center justify-between text-[11px] text-neutral-500 flex-shrink-0">
-      <span>수지캠 v0.1.0-test</span>
+      <span>수지캠 v0.1.1-test</span>
       <a href="https://github.com/kookppong/cam-lite" target="_blank" class="hover:text-white underline transition">
         GitHub Releases (.exe 다운로드)
       </a>
+    </div>
+
+    <!-- 창 선택 모달 (프로그램 창 리스트 팝업) -->
+    <div id="modalWindowSelect" class="absolute inset-0 bg-black/80 backdrop-blur-sm z-50 p-5 hidden flex flex-col">
+      <div class="flex items-center justify-between pb-3 border-b border-neutral-800">
+        <span class="text-sm font-bold text-white flex items-center space-x-2">
+          <span>🪟 녹화할 창(프로그램) 선택</span>
+        </span>
+        <button onclick="closeWindowSelectModal()" class="w-7 h-7 rounded hover:bg-neutral-800 text-neutral-400 hover:text-white text-sm flex items-center justify-center cursor-pointer">✕</button>
+      </div>
+
+      <div id="windowListContainer" class="flex-1 overflow-y-auto py-3 space-y-2.5">
+        <div class="text-xs text-neutral-400 text-center py-8">열려 있는 창 목록을 불러오는 중...</div>
+      </div>
     </div>
 
   </div>

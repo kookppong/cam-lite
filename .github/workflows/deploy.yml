@@ -53,32 +53,36 @@ jobs:
       - name: Install Dependencies
         run: npm install
 
-      - name: Build Windows Installer (v0.1.0-test)
+      - name: Build Windows Installer
         run: npm run dist
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Create or Update GitHub Release
-        uses: softprops/action-gh-release@v1
+      - name: Upload Build Artifacts
+        uses: actions/upload-artifact@v4
         with:
-          tag_name: v0.1.0-test
-          name: "수지캠 (SuziCam) v0.1.0-test Windows 설치형 프로그램"
+          name: suzicam-windows-build
+          path: dist/*.exe
+
+      - name: Create or Update GitHub Release
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          name: "수지캠 (SuziCam) ${{ github.ref_name }} Windows 설치형 프로그램"
           body: |
-            ## 🎬 수지캠 (SuziCam) v0.1.0-test 설치형 프로그램
+            ## 🎬 수지캠 (SuziCam) ${{ github.ref_name }} 업데이트 안내
             
-            반디캠 스타일의 Windows PC 화면 녹화 프로그램입니다.
+            사용자 피드백을 반영한 긴급 패치 버전입니다.
             
-            ### 📥 다운로드 안내
-            * **SuziCam Setup 0.1.0-test.exe**: 바탕화면 및 시작메뉴 바로가기가 생성되는 정식 설치형 프로그램
-            * **SuziCam 0.1.0-test.exe**: 설치 없이 다운로드 후 바로 실행 가능한 무설치 포터블(Portable) 프로그램
+            ### 🛠️ 이번 버전 주요 수정사항
+            1. **화면 내리기(최소화) 및 닫기 버튼 버그 수정**: 상단 타이틀바 `─`, `✕` 버튼 정상 작동
+            2. **다중 모니터 / 서브 모니터 영역 드래그 완벽 지원**: 주 모니터뿐만 아니라 보조 모니터, 세로 피벗 모니터 전체를 아우르는 가상 데스크톱 영역 선택 지원
+            3. **특정 프로그램 창 선택 녹화 모드 추가**: 웹 버전처럼 실행 중인 창 목록을 미리보고 원하는 창만 선택하여 녹화 가능
+            4. **백그라운드 창 전환 시 멈춤 현상 원천 차단**
             
-            ### ✨ 주요 기능
-            * 브라우저 화면 선택 팝업 없이 **원클릭 즉시 녹화**
-            * PC 전체 바탕화면 / 프로그램 어디서든 **자유 마우스 드래그 영역 지정**
-            * **피벗/세로 모니터 자동 감지** 및 90도/180도/270도 화면 회전
-            * 최근 녹화본 **최대 5개 리스트 노출** 및 개별 [✕] 삭제
-            * PC 소리(루프백) 및 마이크 개별 동시 녹음
-            * 하드디스크 용량 허용 시 **무제한 연속 녹화** 지원
+            ### 📥 다운로드 링크
+            * **SuziCam.${{ github.ref_name }}.exe**: 무설치 포터블 단독 실행 파일
+            * **SuziCam.Setup.${{ github.ref_name }}.exe**: 정식 설치형 파일
           draft: false
           prerelease: false
           files: |
