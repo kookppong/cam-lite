@@ -3,6 +3,7 @@ name: Build Desktop Installer & Deploy Web Test
 on:
   push:
     branches: [ main, master ]
+    tags: [ 'v*' ]
   workflow_dispatch:
 
 permissions:
@@ -37,7 +38,7 @@ jobs:
         id: deployment
         uses: actions/deploy-pages@v4
 
-  # 2. Windows 설치형 프로그램 (.exe / NSIS Installer) 빌드 및 릴리즈 등록
+  # 2. Windows 설치형 프로그램 (.exe / NSIS Installer & Portable) 빌드 및 릴리즈 등록
   build-windows:
     runs-on: windows-latest
     steps:
@@ -55,14 +56,35 @@ jobs:
       - name: Build Windows Installer (v0.1.0-test)
         run: npm run dist
 
-      - name: Create GitHub Release with Installer
+      - name: Upload Build Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: suzicam-windows-build
+          path: dist/*.exe
+
+      - name: Create or Update GitHub Release
         uses: softprops/action-gh-release@v1
-        if: startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/main'
         with:
           tag_name: v0.1.0-test
-          name: "Bandicam Lite v0.1.0-test (Alpha Release)"
+          name: "수지캠 (SuziCam) v0.1.0-test Windows 설치형 프로그램"
+          body: |
+            ## 🎬 수지캠 (SuziCam) v0.1.0-test 설치형 프로그램
+            
+            반디캠 스타일의 Windows PC 화면 녹화 프로그램입니다.
+            
+            ### 📥 다운로드 안내
+            * **SuziCam Setup 0.1.0-test.exe**: 바탕화면 및 시작메뉴 바로가기가 생성되는 정식 설치형 프로그램
+            * **SuziCam 0.1.0-test.exe**: 설치 없이 다운로드 후 바로 실행 가능한 무설치 포터블(Portable) 프로그램
+            
+            ### ✨ 주요 기능
+            * 브라우저 화면 선택 팝업 없이 **원클릭 즉시 녹화**
+            * PC 전체 바탕화면 / 프로그램 어디서든 **자유 마우스 드래그 영역 지정**
+            * **피벗/세로 모니터 자동 감지** 및 90도/180도/270도 화면 회전
+            * 최근 녹화본 **최대 5개 리스트 노출** 및 개별 [✕] 삭제
+            * PC 소리(루프백) 및 마이크 개별 동시 녹음
+            * 하드디스크 용량 허용 시 **무제한 연속 녹화** 지원
           draft: false
-          prerelease: true
+          prerelease: false
           files: |
             dist/*.exe
         env:

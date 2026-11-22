@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, desktopCapturer, screen } = require('electron');
+const { app, BrowserWindow, ipcMain, desktopCapturer, screen, session } = require('electron');
 const path = require('path');
 
 let mainWin = null;
@@ -6,21 +6,25 @@ let areaWin = null;
 
 function createMainWindow() {
   mainWin = new BrowserWindow({
-    width: 480,
-    height: 580,
+    width: 520,
+    height: 720,
     minWidth: 440,
     minHeight: 520,
-    title: '수지캠 v0.1.0-test',
+    title: '수지캠 (SuziCam) v0.1.0-test',
     backgroundColor: '#0f1015',
-    frame: false,          // 커스텀 타이틀바
-    resizable: false,
+    frame: false, // 커스텀 타이틀바
+    resizable: true,
     webPreferences: {
       nodeIntegration: true,
       contextIsolation: false
     }
   });
+
   mainWin.loadFile('index.html');
-  mainWin.on('closed', () => { mainWin = null; app.quit(); });
+  mainWin.on('closed', () => {
+    mainWin = null;
+    app.quit();
+  });
 }
 
 // 화면 소스 목록 반환 (공유 선택창 없이 바로)
@@ -71,7 +75,23 @@ ipcMain.on('area-cancelled', () => {
 
 // 창 컨트롤 (커스텀 타이틀바)
 ipcMain.on('win-minimize', () => mainWin?.minimize());
-ipcMain.on('win-close',    () => { mainWin?.close(); });
+ipcMain.on('win-close', () => { mainWin?.close(); });
 
-app.whenReady().then(createMainWindow);
-app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
+app.whenReady().then(() => {
+  // [Electron 28+] 브라우저 화면 공유 선택창 없이 기본 모니터와 시스템 오디오를 바로 연결
+  if (session && session.defaultSession && session.defaultSession.setDisplayMediaRequestHandler) {
+    session.defaultSession.setDisplayMediaRequestHandler((request, callback) => {
+      desktopCapturer.getSources({ types: ['screen'] }).then((sources) => {
+        callback({ video: sources[0], audio: 'loopback' });
+      }).catch(() => {
+        callback({});
+      });
+    });
+  }
+
+  createMainWindow();
+});
+
+app.on('window-all-closed', () => {
+  if (process.platform !== 'darwin') app.quit();
+});
