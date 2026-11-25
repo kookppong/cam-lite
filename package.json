@@ -1,6 +1,6 @@
 {
   "name": "suzicam",
-  "version": "0.1.1-test",
+  "version": "0.1.2-test",
   "description": "수지캠 (SuziCam) - PC 화면 녹화기 및 웹 테스트",
   "author": "kookppong",
   "main": "main.js",

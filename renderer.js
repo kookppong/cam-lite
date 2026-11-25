@@ -413,15 +413,32 @@ function stopRecord() {
   setUI(false);
 }
 
-function onRecordStop() {
-  const blob = new Blob(chunks, { type: 'video/webm' });
-  const url = URL.createObjectURL(blob);
+async function onRecordStop() {
+  const rawBlob = new Blob(chunks, { type: 'video/webm' });
+  const durationMs = Math.max(100, Math.floor(performance.now() - recStart - pausedTotal));
+
+  // [탐색/타임라인 버벅임 해결] WebM EBML 헤더에 재생 시간 및 타임라인 인덱스(Cues) 주입
+  let finalBlob = rawBlob;
+  const fixFn = (typeof ysFixWebmDuration === 'function')
+    ? ysFixWebmDuration
+    : ((typeof window !== 'undefined' && typeof window.ysFixWebmDuration === 'function') ? window.ysFixWebmDuration : null);
+
+  if (fixFn) {
+    try {
+      finalBlob = await fixFn(rawBlob, durationMs);
+    } catch(err) {
+      console.warn('WebM Duration 인덱스 주입 오류:', err);
+      finalBlob = rawBlob;
+    }
+  }
+
+  const url = URL.createObjectURL(finalBlob);
   const now = new Date();
   const timeStr = `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
 
   const newItem = {
     id: Date.now(),
-    blob: blob,
+    blob: finalBlob,
     url: url,
     duration: timerEl.textContent !== '00:00:00.000' ? timerEl.textContent : '완료',
     timestamp: timeStr,
