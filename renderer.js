@@ -1,5 +1,8 @@
 /**
- * 수지캠 v0.1.0-test — 통합 렌더러
+ * 수지캠 v0.1.3-test — 통합 렌더러
+ * - [신규] H.264 MP4 자동 변환 (FFmpeg, 데스크톱 전용)
+ * - [신규] 메모리 효율적 스트림 녹화 (임시 파일 직접 쓰기)
+ * - [신규] 변환 진행률 오버레이 UI
  * - 타이틀바 화면내리기/종료 버튼 연동
  * - 다중/서브 모니터 영역 드래그 및 타겟 모니터 매칭
  * - 특정 프로그램 창 선택 녹화 모드 지원
@@ -49,7 +52,6 @@ function setRecordMode(mode) {
   const panelArea = document.getElementById('panelAreaInfo');
   const panelWindow = document.getElementById('panelWindowInfo');
 
-  // 버튼 스타일 초기화
   const defaultClass = 'py-2.5 px-2 rounded-xl text-xs font-bold bg-neutral-800 hover:bg-neutral-700 text-neutral-300 border border-neutral-700 transition cursor-pointer flex flex-col items-center space-y-1';
   const activeClass = 'py-2.5 px-2 rounded-xl text-xs font-bold bg-blue-700 hover:bg-blue-600 text-white border border-blue-500 shadow-md transition cursor-pointer flex flex-col items-center space-y-1';
   const activeWinClass = 'py-2.5 px-2 rounded-xl text-xs font-bold bg-purple-700 hover:bg-purple-600 text-white border border-purple-500 shadow-md transition cursor-pointer flex flex-col items-center space-y-1';
@@ -83,7 +85,7 @@ window.setRecordMode = setRecordMode;
 // ── 다중 모니터 영역 선택 수신 ──
 if (isElectron && ipcRenderer) {
   ipcRenderer.on('area-result', (_e, area) => {
-    cropArea = area; // { x, y, w, h, displayId, displayName }
+    cropArea = area;
     updateAreaUI();
     setRecordMode('area');
   });
@@ -118,15 +120,19 @@ function updateAreaUI() {
     areaY.textContent = '-';
     areaW.textContent = '전체';
     areaH.textContent = '전체';
-    modeBadge.textContent = '전체 화면';
-    modeBadge.className = 'text-xs px-2 py-0.5 rounded bg-neutral-800 text-neutral-400 border border-neutral-700';
+    if (modeBadge) {
+      modeBadge.textContent = '전체 화면';
+      modeBadge.className = 'text-xs px-2 py-0.5 rounded bg-neutral-800 text-neutral-400 border border-neutral-700';
+    }
   } else {
     areaX.textContent = cropArea.x;
     areaY.textContent = cropArea.y;
     areaW.textContent = cropArea.w;
     areaH.textContent = cropArea.h;
-    modeBadge.textContent = `${cropArea.displayName || '모니터'} (${cropArea.w}×${cropArea.h})`;
-    modeBadge.className = 'text-xs px-2 py-0.5 rounded bg-blue-950 text-blue-300 border border-blue-700';
+    if (modeBadge) {
+      modeBadge.textContent = `${cropArea.displayName || '모니터'} (${cropArea.w}×${cropArea.h})`;
+      modeBadge.className = 'text-xs px-2 py-0.5 rounded bg-blue-950 text-blue-300 border border-blue-700';
+    }
   }
 }
 
@@ -163,7 +169,6 @@ async function openWindowSelectModal() {
       container.innerHTML = `<div class="text-xs text-red-400 text-center py-8">창 목록 로드 실패: ${err.message}</div>`;
     }
   } else {
-    // 웹 브라우저 모드: 화면 공유 요청 시 '창' 탭 선택하도록 안내
     container.innerHTML = `
       <div class="bg-neutral-900 border border-neutral-800 rounded-xl p-4 text-center space-y-3">
         <div class="text-xs text-neutral-300 leading-relaxed">
@@ -223,6 +228,65 @@ let recordedItems = [];
 let mediaRecorder = null, chunks = [], captureStream = null, cropStream = null, renderIntervalId = null;
 let currentVideoDimensions = { width: 1920, height: 1080 };
 
+// [데스크톱 전용] 임시 파일 녹화 변수
+let tempWebmPath = null;
+let tempWriteStream = null;
+let writePromiseChain = Promise.resolve();
+let ffmpegAvailable = false;
+
+// ── FFmpeg 사용 가능 여부 확인 (앱 시작 시 1회) ──
+async function checkFfmpeg() {
+  if (isElectron && ipcRenderer) {
+    try {
+      ffmpegAvailable = await ipcRenderer.invoke('check-ffmpeg');
+      console.log('FFmpeg 사용 가능:', ffmpegAvailable);
+      // FFmpeg 상태 뱃지 업데이트
+      const badge = document.getElementById('ffmpegBadge');
+      if (badge) {
+        if (ffmpegAvailable) {
+          badge.textContent = 'MP4 (H.264)';
+          badge.className = 'text-[10px] px-1.5 py-0.5 rounded bg-green-950 text-green-300 border border-green-800 font-semibold';
+        } else {
+          badge.textContent = 'WebM (원본)';
+          badge.className = 'text-[10px] px-1.5 py-0.5 rounded bg-orange-950 text-orange-300 border border-orange-800 font-semibold';
+        }
+      }
+    } catch(e) {
+      ffmpegAvailable = false;
+    }
+  }
+}
+
+// ── FFmpeg 변환 진행률 수신 ──
+if (isElectron && ipcRenderer) {
+  ipcRenderer.on('ffmpeg-progress', (_e, percent) => {
+    const bar = document.getElementById('convertProgress');
+    const status = document.getElementById('convertStatus');
+    if (bar) bar.style.width = `${Math.min(percent, 99)}%`;
+    if (status) status.textContent = `H.264 MP4 변환 중... ${percent}%`;
+  });
+}
+
+function showConvertingOverlay() {
+  const overlay = document.getElementById('convertingOverlay');
+  if (overlay) {
+    overlay.classList.remove('hidden');
+    const bar = document.getElementById('convertProgress');
+    const status = document.getElementById('convertStatus');
+    if (bar) bar.style.width = '0%';
+    if (status) status.textContent = 'FFmpeg 변환 준비 중...';
+  }
+}
+
+function hideConvertingOverlay() {
+  const overlay = document.getElementById('convertingOverlay');
+  if (overlay) overlay.classList.add('hidden');
+}
+
+// ══════════════════════════════════════════════════════
+// ── 녹화 시작 / 종료 ──
+// ══════════════════════════════════════════════════════
+
 async function toggleRecord() {
   if (!isRec) await startRecord();
   else        stopRecord();
@@ -240,13 +304,10 @@ async function startRecord() {
       let targetSourceId = null;
 
       if (currentMode === 'window' && targetWindowSource) {
-        // [창 선택 모드]
         targetSourceId = targetWindowSource.id;
       } else {
-        // [전체 화면 또는 영역 지정 모드]
         const screenSources = await ipcRenderer.invoke('get-screen-sources');
         if (cropArea && cropArea.displayId) {
-          // 서브모니터 매칭
           const matched = screenSources.find(s => s.display_id === cropArea.displayId);
           targetSourceId = matched ? matched.id : screenSources[0].id;
         } else {
@@ -370,8 +431,26 @@ async function startRecord() {
       currentVideoDimensions = { width: nativeW, height: nativeH };
     }
 
+    // ── [데스크톱] 임시 파일 WriteStream 생성 ──
+    if (isElectron) {
+      try {
+        const os = require('os');
+        const pathMod = require('path');
+        const fsMod = require('fs');
+        tempWebmPath = pathMod.join(os.tmpdir(), `suzicam_raw_${Date.now()}.webm`);
+        tempWriteStream = fsMod.createWriteStream(tempWebmPath);
+        writePromiseChain = Promise.resolve();
+        console.log('임시 녹화 파일:', tempWebmPath);
+      } catch(e) {
+        console.warn('임시 파일 생성 실패, 메모리 모드:', e);
+        tempWebmPath = null;
+        tempWriteStream = null;
+      }
+    }
+
     chunks = [];
 
+    // 코덱 선택 (VP9 우선, FFmpeg가 최종 변환 담당)
     const mimes = [
       'video/webm;codecs=vp9,opus',
       'video/webm;codecs=vp8,opus',
@@ -382,11 +461,30 @@ async function startRecord() {
 
     const recorderOptions = {
       mimeType: mime,
-      videoBitsPerSecond: 6000000
+      videoBitsPerSecond: 8_000_000
     };
 
     mediaRecorder = new MediaRecorder(recordStream, mime ? recorderOptions : {});
-    mediaRecorder.ondataavailable = e => { if (e.data?.size > 0) chunks.push(e.data); };
+
+    mediaRecorder.ondataavailable = (e) => {
+      if (e.data?.size > 0) {
+        if (isElectron && tempWriteStream) {
+          // 데스크톱: 임시 파일에 직접 스트리밍 (메모리 절약)
+          writePromiseChain = writePromiseChain.then(async () => {
+            try {
+              const arrayBuf = await e.data.arrayBuffer();
+              tempWriteStream.write(Buffer.from(arrayBuf));
+            } catch(err) {
+              console.warn('청크 파일 쓰기 오류:', err);
+            }
+          });
+        } else {
+          // 웹 브라우저: 메모리에 축적
+          chunks.push(e.data);
+        }
+      }
+    };
+
     mediaRecorder.onstop = onRecordStop;
     mediaRecorder.start(500);
 
@@ -413,33 +511,134 @@ function stopRecord() {
   setUI(false);
 }
 
+// ══════════════════════════════════════════════════════
+// ── 녹화 종료 후처리 (MP4 변환 / WebM 대체) ──
+// ══════════════════════════════════════════════════════
+
 async function onRecordStop() {
-  const rawBlob = new Blob(chunks, { type: 'video/webm' });
   const durationMs = Math.max(100, Math.floor(performance.now() - recStart - pausedTotal));
 
-  // [탐색/타임라인 버벅임 해결] WebM EBML 헤더에 재생 시간 및 타임라인 인덱스(Cues) 주입
-  let finalBlob = rawBlob;
-  const fixFn = (typeof ysFixWebmDuration === 'function')
-    ? ysFixWebmDuration
-    : ((typeof window !== 'undefined' && typeof window.ysFixWebmDuration === 'function') ? window.ysFixWebmDuration : null);
+  if (isElectron && ipcRenderer && tempWebmPath) {
+    // ══ 데스크톱: FFmpeg H.264 MP4 변환 파이프라인 ══
 
-  if (fixFn) {
-    try {
-      finalBlob = await fixFn(rawBlob, durationMs);
-    } catch(err) {
-      console.warn('WebM Duration 인덱스 주입 오류:', err);
-      finalBlob = rawBlob;
+    // 1. 모든 비동기 청크 쓰기 완료 대기
+    await writePromiseChain;
+    if (tempWriteStream) {
+      tempWriteStream.end();
+      await new Promise(resolve => tempWriteStream.on('finish', resolve));
+      tempWriteStream = null;
     }
-  }
 
-  const url = URL.createObjectURL(finalBlob);
+    const fsMod = require('fs');
+    const tempMp4Path = tempWebmPath.replace('.webm', '.mp4');
+
+    if (ffmpegAvailable) {
+      // 2. 변환 오버레이 UI 표시
+      showConvertingOverlay();
+
+      try {
+        // 3. FFmpeg 변환 실행 (WebM → H.264 MP4)
+        await ipcRenderer.invoke('convert-to-mp4', {
+          inputPath: tempWebmPath,
+          outputPath: tempMp4Path,
+          durationMs: durationMs
+        });
+
+        // 4. 변환 완료 → MP4 파일을 Blob URL로 로드
+        const fileSize = fsMod.statSync(tempMp4Path).size;
+        console.log(`MP4 변환 완료: ${(fileSize / 1024 / 1024).toFixed(1)} MB`);
+
+        const mp4Buffer = fsMod.readFileSync(tempMp4Path);
+        const mp4Blob = new Blob([mp4Buffer], { type: 'video/mp4' });
+        const url = URL.createObjectURL(mp4Blob);
+
+        addRecordingItem(mp4Blob, url, 'mp4');
+
+        // 5. 임시 파일 정리
+        try { fsMod.unlinkSync(tempWebmPath); } catch(e) {}
+        try { fsMod.unlinkSync(tempMp4Path); } catch(e) {}
+
+      } catch(err) {
+        console.error('MP4 변환 실패:', err);
+        // WebM 대체 로드
+        fallbackToWebm(fsMod, durationMs);
+      }
+
+      hideConvertingOverlay();
+
+    } else {
+      // FFmpeg 없음 → WebM 직접 사용 (fix-webm-duration 적용)
+      console.warn('FFmpeg 미설치, WebM 원본으로 대체');
+      fallbackToWebm(fsMod, durationMs);
+    }
+
+    tempWebmPath = null;
+
+  } else {
+    // ══ 웹 브라우저: WebM + Duration Fix ══
+    const rawBlob = new Blob(chunks, { type: 'video/webm' });
+
+    let finalBlob = rawBlob;
+    const fixFn = (typeof ysFixWebmDuration === 'function')
+      ? ysFixWebmDuration
+      : ((typeof window !== 'undefined' && typeof window.ysFixWebmDuration === 'function') ? window.ysFixWebmDuration : null);
+
+    if (fixFn) {
+      try {
+        finalBlob = await fixFn(rawBlob, durationMs);
+      } catch(err) {
+        console.warn('WebM Duration fix 오류:', err);
+        finalBlob = rawBlob;
+      }
+    }
+
+    const url = URL.createObjectURL(finalBlob);
+    addRecordingItem(finalBlob, url, 'webm');
+  }
+}
+
+// WebM 대체 로드 (FFmpeg 실패 또는 미설치 시)
+async function fallbackToWebm(fsMod, durationMs) {
+  try {
+    if (tempWebmPath && fsMod.existsSync(tempWebmPath)) {
+      const webmBuffer = fsMod.readFileSync(tempWebmPath);
+      let webmBlob = new Blob([webmBuffer], { type: 'video/webm' });
+
+      // fix-webm-duration 적용 시도
+      const fixFn = (typeof ysFixWebmDuration === 'function')
+        ? ysFixWebmDuration
+        : ((typeof window !== 'undefined' && typeof window.ysFixWebmDuration === 'function') ? window.ysFixWebmDuration : null);
+
+      if (fixFn && durationMs > 0) {
+        try {
+          webmBlob = await fixFn(webmBlob, durationMs);
+        } catch(e) {
+          console.warn('WebM fix 대체 적용 실패:', e);
+        }
+      }
+
+      const url = URL.createObjectURL(webmBlob);
+      addRecordingItem(webmBlob, url, 'webm');
+      try { fsMod.unlinkSync(tempWebmPath); } catch(e) {}
+    }
+  } catch(e) {
+    console.error('WebM 대체 로드 실패:', e);
+  }
+}
+
+// ── 녹화 아이템 추가 ──
+function addRecordingItem(blob, url, format) {
   const now = new Date();
   const timeStr = `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
 
+  const sizeMB = (blob.size / 1024 / 1024).toFixed(1);
+
   const newItem = {
     id: Date.now(),
-    blob: finalBlob,
+    blob: blob,
     url: url,
+    format: format || 'webm',
+    sizeMB: sizeMB,
     duration: timerEl.textContent !== '00:00:00.000' ? timerEl.textContent : '완료',
     timestamp: timeStr,
     width: currentVideoDimensions.width,
@@ -474,21 +673,28 @@ function renderRecordingsList() {
 
   recordedItems.forEach((item, index) => {
     const isVert = item.height > item.width;
+    const isMp4 = item.format === 'mp4';
     const card = document.createElement('div');
     card.className = 'bg-[#12131a] border border-[#2b2d3a] rounded-xl p-3 space-y-2.5 shadow-md';
     card.id = `rec-card-${item.id}`;
 
     card.innerHTML = `
       <div class="flex items-center justify-between border-b border-neutral-800/80 pb-2">
-        <div class="flex items-center space-x-2">
+        <div class="flex items-center space-x-2 flex-wrap gap-y-1">
           <span class="text-xs font-bold text-red-400">#${recordedItems.length - index}</span>
           <span class="text-[11px] text-neutral-400">${item.timestamp}</span>
           <span class="text-[10px] px-1.5 py-0.5 rounded font-mono ${isVert ? 'bg-cyan-950 text-cyan-300 border border-cyan-800' : 'bg-neutral-800 text-neutral-300 border border-neutral-700'}">
             ${isVert ? '세로' : '가로'} (${item.width}×${item.height})
           </span>
+          <span class="text-[10px] px-1.5 py-0.5 rounded font-bold ${isMp4 ? 'bg-green-950 text-green-300 border border-green-800' : 'bg-orange-950 text-orange-300 border border-orange-800'}">
+            ${(item.format || 'webm').toUpperCase()}
+          </span>
+          <span class="text-[10px] px-1.5 py-0.5 rounded bg-neutral-800 text-neutral-400 border border-neutral-700 font-mono">
+            ${item.sizeMB} MB
+          </span>
         </div>
         <button onclick="deleteRecording(${item.id})" 
-          class="w-6 h-6 rounded-full hover:bg-red-950 text-neutral-400 hover:text-red-400 text-xs flex items-center justify-center transition cursor-pointer" title="이 녹화본 삭제">
+          class="w-6 h-6 rounded-full hover:bg-red-950 text-neutral-400 hover:text-red-400 text-xs flex items-center justify-center transition cursor-pointer flex-shrink-0" title="이 녹화본 삭제">
           ✕
         </button>
       </div>
@@ -507,9 +713,9 @@ function renderRecordingsList() {
           <span id="rotate-label-${item.id}">90° 회전 (${item.rotation}°)</span>
         </button>
 
-        <a id="download-link-${item.id}" href="${item.url}" download="SuziCam_${item.timestamp.replace(/[: -]/g,'_')}.webm"
+        <a id="download-link-${item.id}" href="${item.url}" download="SuziCam_${item.timestamp.replace(/[: -]/g,'_')}.${item.format || 'webm'}"
           class="px-3.5 py-1.5 rounded-lg font-bold bg-green-700 hover:bg-green-600 text-white transition flex items-center space-x-1 shadow">
-          <span>💾 다운로드</span>
+          <span>💾 다운로드 (.${item.format || 'webm'})</span>
         </a>
       </div>
     `;
@@ -613,4 +819,5 @@ function setUI(recording) {
 
 document.addEventListener('DOMContentLoaded', () => {
   setRecordMode('screen');
+  checkFfmpeg();
 });
